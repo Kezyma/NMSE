@@ -62,6 +62,11 @@ partial class CataloguePanel
             AutoSize = true,
             FlowDirection = FlowDirection.LeftToRight,
         };
+        _techCompletionLabel = CreateCompletionLabel();
+        _addMissingTechBtn = CreateAddMissingButton();
+        _addMissingTechBtn.Click += AddAllMissingTech_Click;
+        techButtonPanel.Controls.Add(_techCompletionLabel);
+        techButtonPanel.Controls.Add(_addMissingTechBtn);
         _addTechButton = new Button { Text = "Add Technology", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _removeTechButton = new Button { Text = "Remove Selected", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _addTechButton.Click += AddTech_Click;
@@ -116,6 +121,11 @@ partial class CataloguePanel
             AutoSize = true,
             FlowDirection = FlowDirection.LeftToRight,
         };
+        _productCompletionLabel = CreateCompletionLabel();
+        _addMissingProductsBtn = CreateAddMissingButton();
+        _addMissingProductsBtn.Click += AddAllMissingProducts_Click;
+        productButtonPanel.Controls.Add(_productCompletionLabel);
+        productButtonPanel.Controls.Add(_addMissingProductsBtn);
         _addProductButton = new Button { Text = "Add Product", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _removeProductButton = new Button { Text = "Remove Selected", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _addProductButton.Click += AddProduct_Click;
@@ -171,6 +181,11 @@ partial class CataloguePanel
             AutoSize = true,
             FlowDirection = FlowDirection.LeftToRight,
         };
+        _specialsCompletionLabel = CreateCompletionLabel();
+        _addMissingSpecialsBtn = CreateAddMissingButton();
+        _addMissingSpecialsBtn.Click += AddAllMissingSpecials_Click;
+        specialsButtonPanel.Controls.Add(_specialsCompletionLabel);
+        specialsButtonPanel.Controls.Add(_addMissingSpecialsBtn);
         _addSpecialsButton = new Button { Text = UiStrings.Get("discovery.add_special"), AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _removeSpecialsButton = new Button { Text = UiStrings.Get("common.remove_selected"), AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _addSpecialsButton.Click += AddSpecials_Click;
@@ -308,6 +323,11 @@ partial class CataloguePanel
             AutoSize = true,
             FlowDirection = FlowDirection.LeftToRight,
         };
+        _wordsCompletionLabel = CreateCompletionLabel();
+        _addMissingWordsBtn = CreateAddMissingButton();
+        _addMissingWordsBtn.Click += AddAllMissingWords_Click;
+        wordButtonPanel.Controls.Add(_wordsCompletionLabel);
+        wordButtonPanel.Controls.Add(_addMissingWordsBtn);
         _learnAllWordsButton = new Button { Text = "Learn All", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _unlearnAllWordsButton = new Button { Text = "Unlearn All", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _learnAllWordsButton.Click += LearnAllWords_Click;
@@ -392,6 +412,8 @@ partial class CataloguePanel
             AutoSize = true,
             FlowDirection = FlowDirection.LeftToRight,
         };
+        _glyphsCompletionLabel = CreateCompletionLabel();
+        glyphButtonPanel.Controls.Add(_glyphsCompletionLabel);
         _learnAllGlyphsButton = new Button { Text = "Learn All", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _unlearnAllGlyphsButton = new Button { Text = "Unlearn All", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _learnAllGlyphsButton.Click += LearnAllGlyphs_Click;
@@ -580,6 +602,11 @@ partial class CataloguePanel
             AutoSize = true,
             FlowDirection = FlowDirection.LeftToRight,
         };
+        _fishCompletionLabel = CreateCompletionLabel();
+        _addMissingFishBtn = CreateAddMissingButton();
+        _addMissingFishBtn.Click += AddAllMissingFish_Click;
+        fishButtonPanel.Controls.Add(_fishCompletionLabel);
+        fishButtonPanel.Controls.Add(_addMissingFishBtn);
         _addFishBtn = new Button { Text = "Add Fish", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _addFishBtn.Click += AddFish_Click;
         _removeFishBtn = new Button { Text = "Remove Selected", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
@@ -686,6 +713,11 @@ partial class CataloguePanel
             AutoSize = true,
             FlowDirection = FlowDirection.LeftToRight,
         };
+        _recipesCompletionLabel = CreateCompletionLabel();
+        _addMissingRecipesBtn = CreateAddMissingButton();
+        _addMissingRecipesBtn.Click += AddAllMissingRecipes_Click;
+        recipeButtonPanel.Controls.Add(_recipesCompletionLabel);
+        recipeButtonPanel.Controls.Add(_addMissingRecipesBtn);
         _addRecipeBtn = new Button { Text = UiStrings.Get("recipe.add_recipe"), AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _addRecipeBtn.Click += AddRecipe_Click;
         _removeRecipeBtn = new Button { Text = UiStrings.Get("recipe.remove_selected"), AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
@@ -710,11 +742,52 @@ partial class CataloguePanel
         _recipeTab.Controls.Add(_recipeInnerTabs);
         _tabControl.TabPages.Add(_recipeTab);
 
+        // --- Tab 9: Wonders ---
+        _wondersPanel = new WondersCompletionPanel { Dock = DockStyle.Fill };
+        var wondersTab = new TabPage(UiStrings.Get("discovery.tab_wonders"));
+        wondersTab.Controls.Add(_wondersPanel);
+        _tabControl.TabPages.Add(wondersTab);
+
+        // --- Tab 10: Collected Knowledge ---
+        _knowledgePanel = new KnowledgeCompletionPanel { Dock = DockStyle.Fill };
+        var knowledgeTab = new TabPage(UiStrings.Get("discovery.tab_knowledge"));
+        knowledgeTab.Controls.Add(_knowledgePanel);
+        _tabControl.TabPages.Add(knowledgeTab);
+
+        // --- Tab 11: Fossils ---
+        _fossilsPanel = new AccountCataloguePanel(fossils: true) { Dock = DockStyle.Fill };
+        var fossilsTab = new TabPage(UiStrings.Get("discovery.group_fossils"));
+        fossilsTab.Controls.Add(_fossilsPanel);
+        _tabControl.TabPages.Add(fossilsTab);
+
+        // --- Tab 12: Raw Materials ---
+        _rawMaterialsPanel = new AccountCataloguePanel(fossils: false) { Dock = DockStyle.Fill };
+        var rawMaterialsTab = new TabPage(UiStrings.Get("discovery.group_raw_materials"));
+        rawMaterialsTab.Controls.Add(_rawMaterialsPanel);
+        _tabControl.TabPages.Add(rawMaterialsTab);
+
+        // --- Tab 13: Discovery Stats ---
+        _discoveryStatsPanel = new DiscoveryStatsPanel { Dock = DockStyle.Fill };
+        var statsTab = new TabPage(UiStrings.Get("discovery.tab_stats"));
+        statsTab.Controls.Add(_discoveryStatsPanel);
+        _tabControl.TabPages.Add(statsTab);
+
 
         _tabControl.ResumeLayout(false);
         _tabControl.PerformLayout();
 
+        _curatedNameNoticeLabel = new Label
+        {
+            Dock = DockStyle.Top,
+            AutoSize = false,
+            Height = 24,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Padding = new Padding(6, 0, 6, 0),
+            Font = FontManager.CreateFont(9, FontStyle.Italic),
+        };
+
         this.Controls.Add(_tabControl);
+        this.Controls.Add(_curatedNameNoticeLabel);
 
         //
         // CataloguePanel
@@ -815,6 +888,43 @@ partial class CataloguePanel
     private Button _removeRecipeBtn = null!;
     private Button _exportRecipeBtn = null!;
     private Button _importRecipeBtn = null!;
+
+    // Catalogue completion controls (verified pack)
+    private Label _curatedNameNoticeLabel = null!;
+    private Label _techCompletionLabel = null!;
+    private Button _addMissingTechBtn = null!;
+    private Label _productCompletionLabel = null!;
+    private Button _addMissingProductsBtn = null!;
+    private Label _specialsCompletionLabel = null!;
+    private Button _addMissingSpecialsBtn = null!;
+    private Label _wordsCompletionLabel = null!;
+    private Button _addMissingWordsBtn = null!;
+    private Label _glyphsCompletionLabel = null!;
+    private Label _fishCompletionLabel = null!;
+    private Button _addMissingFishBtn = null!;
+    private Label _recipesCompletionLabel = null!;
+    private Button _addMissingRecipesBtn = null!;
+
+    // Part B completion sub-tabs
+    private WondersCompletionPanel _wondersPanel = null!;
+    private KnowledgeCompletionPanel _knowledgePanel = null!;
+    private AccountCataloguePanel _fossilsPanel = null!;
+    private AccountCataloguePanel _rawMaterialsPanel = null!;
+    private DiscoveryStatsPanel _discoveryStatsPanel = null!;
+
+    private static Label CreateCompletionLabel() => new()
+    {
+        AutoSize = true,
+        Padding = new Padding(0, 8, 8, 0),
+        Font = FontManager.CreateFont(9, FontStyle.Bold),
+    };
+
+    private static Button CreateAddMissingButton() => new()
+    {
+        Text = "Add All Missing",
+        AutoSize = true,
+        AutoSizeMode = AutoSizeMode.GrowAndShrink,
+    };
 
     private Button CreateGotoButton(string[] path)
     {

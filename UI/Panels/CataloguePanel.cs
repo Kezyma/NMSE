@@ -23,6 +23,7 @@ public partial class CataloguePanel : UserControl
     private IconManager? _iconManager;
     private WordDatabase? _wordDatabase;
     private RecipeDatabase? _recipeDatabase;
+    private CatalogueDatabase? _catalogueDatabase;
 
     // Reference to save data's KnownWordGroups for word state operations
     private JsonArray? _knownWordGroups;
@@ -62,6 +63,12 @@ public partial class CataloguePanel : UserControl
     public CataloguePanel()
     {
         InitializeComponent();
+
+        _wondersPanel.DataModified += (s, e) => RaiseDataModified();
+        _knowledgePanel.DataModified += (s, e) => RaiseDataModified();
+        _fossilsPanel.DataModified += (s, e) => RaiseDataModified();
+        _rawMaterialsPanel.DataModified += (s, e) => RaiseDataModified();
+        _discoveryStatsPanel.DataModified += (s, e) => RaiseDataModified();
     }
 
     /// <summary>
@@ -76,6 +83,36 @@ public partial class CataloguePanel : UserControl
     public void SetDatabase(GameItemDatabase? database)
     {
         _database = database;
+        _fossilsPanel.SetDatabase(database);
+        _rawMaterialsPanel.SetDatabase(database);
+    }
+
+    /// <summary>Sets the loaded account data for the Account Catalogue sub-tab.</summary>
+    /// <param name="accountData">The loaded accountdata root, or null when unavailable.</param>
+    public void SetAccountData(JsonObject? accountData)
+    {
+        _fossilsPanel.SetAccountData(accountData);
+        _rawMaterialsPanel.SetAccountData(accountData);
+    }
+
+    /// <summary>
+    /// Sets the verified catalogue completion pack used by the per-tab completion
+    /// counters and the "Add All Missing" actions. Called by MainForm once the
+    /// resources path is known.
+    /// </summary>
+    /// <param name="pack">The loaded pack, or null when the pack data is unavailable.</param>
+    internal void SetCatalogueDatabase(CatalogueDatabase? pack)
+    {
+        _catalogueDatabase = pack;
+        if (_savedSaveData != null)
+        {
+            _wondersPanel.LoadData(_savedSaveData, pack);
+            _knowledgePanel.LoadData(_savedSaveData, pack);
+            _fossilsPanel.LoadData(_savedSaveData, pack);
+            _rawMaterialsPanel.LoadData(_savedSaveData, pack);
+            _discoveryStatsPanel.LoadData(_savedSaveData, pack);
+        }
+        RefreshCompletionCounters();
     }
 
     public void SetRecipeDatabase(RecipeDatabase? recipeDatabase)
@@ -91,6 +128,8 @@ public partial class CataloguePanel : UserControl
     public void SetIconManager(IconManager? iconManager)
     {
         _iconManager = iconManager;
+        _fossilsPanel.SetIconManager(iconManager);
+        _rawMaterialsPanel.SetIconManager(iconManager);
         LoadGlyphIcons();
         LoadRaceIcons();
     }
@@ -155,6 +194,7 @@ public partial class CataloguePanel : UserControl
         _savedSaveData = saveData;
         var playerState = saveData.GetObject("PlayerStateData");
         if (playerState == null) return;
+        _savedPlayerState = playerState;
 
         LoadKnownItems(playerState, "KnownTech", _techGrid);
         LoadKnownItems(playerState, "KnownProducts", _productGrid);
@@ -164,6 +204,13 @@ public partial class CataloguePanel : UserControl
         LoadKnownLocations(playerState);
         LoadKnownFish(playerState);
         LoadKnownRecipes(playerState);
+        RefreshCompletionCounters();
+
+        _wondersPanel.LoadData(saveData, _catalogueDatabase);
+        _knowledgePanel.LoadData(saveData, _catalogueDatabase);
+        _fossilsPanel.LoadData(saveData, _catalogueDatabase);
+        _rawMaterialsPanel.LoadData(saveData, _catalogueDatabase);
+        _discoveryStatsPanel.LoadData(saveData, _catalogueDatabase);
         }
         finally
         {
@@ -175,6 +222,10 @@ public partial class CataloguePanel : UserControl
     {
         var playerState = saveData.GetObject("PlayerStateData");
         if (playerState == null) return;
+
+        // Wonder discovery dependencies are injected only when the save is written,
+        // so a tick/untick round trip in the UI leaves no residue.
+        _wondersPanel.InjectWonderDependencies(saveData);
 
         SaveKnownItems(playerState, "KnownTech", _techGrid);
         SaveKnownItems(playerState, "KnownProducts", _productGrid);
@@ -207,8 +258,13 @@ public partial class CataloguePanel : UserControl
         _locationsGrid.Rows.Clear();
         _fishGrid.Rows.Clear();
         _recipeGrid.Rows.Clear();
+        _wondersPanel.PurgeData();
+        _knowledgePanel.PurgeData();
+        _fossilsPanel.PurgeData();
+        _rawMaterialsPanel.PurgeData();
+        _discoveryStatsPanel.PurgeData();
 
-        // Dispose every cached scaled icon bitmap (typically 24×24 px each) and
+        // Dispose every cached scaled icon bitmap (typically 24x24 px each) and
         // clear the cache so they are re-created on the next LoadData call.
         foreach (var img in _scaledIconCache.Values)
             img.Dispose();
@@ -1938,6 +1994,164 @@ public partial class CataloguePanel : UserControl
         }
     }
 
+    // --- Catalogue completion (verified pack) ---
+
+    /// <summary>
+    /// Refreshes the per-tab "Known: have / total (pct)" counters from the verified
+    /// pack and hides the "Add All Missing" actions when the pack is unavailable.
+    /// </summary>
+    private void RefreshCompletionCounters()
+    {
+        bool available = _catalogueDatabase is { IsAvailable: true };
+        _addMissingTechBtn.Visible = available;
+        _addMissingProductsBtn.Visible = available;
+        _addMissingSpecialsBtn.Visible = available;
+        _addMissingWordsBtn.Visible = available;
+        _addMissingFishBtn.Visible = available;
+        _addMissingRecipesBtn.Visible = available;
+
+        if (!available)
+        {
+            ClearCompletionLabels();
+            return;
+        }
+
+        var playerState = _savedPlayerState ?? _savedSaveData?.GetObject("PlayerStateData");
+        if (playerState == null)
+        {
+            ClearCompletionLabels();
+            return;
+        }
+
+        SetCompletionLabel(_techCompletionLabel, CatalogueCompletionLogic.GetCompletion(playerState, "KnownTech", _catalogueDatabase!.KnownTech));
+        SetCompletionLabel(_productCompletionLabel, CatalogueCompletionLogic.GetCompletion(playerState, "KnownProducts", _catalogueDatabase.KnownProducts));
+        SetCompletionLabel(_specialsCompletionLabel, CatalogueCompletionLogic.GetCompletion(playerState, "KnownSpecials", _catalogueDatabase.KnownSpecials));
+        SetCompletionLabel(_recipesCompletionLabel, CatalogueCompletionLogic.GetCompletion(playerState, "KnownRefinerRecipes", _catalogueDatabase.KnownRefinerRecipes));
+        SetCompletionLabel(_wordsCompletionLabel, CatalogueCompletionLogic.GetWordGroupCompletion(playerState, _catalogueDatabase.KnownWordGroups));
+        SetCompletionLabel(_fishCompletionLabel, CatalogueCompletionLogic.GetFishingCompletion(playerState, _catalogueDatabase.Fishing));
+
+        int glyphs = System.Numerics.BitOperations.PopCount((uint)CatalogueLogic.LoadGlyphBitfield(playerState) & 0xFFFFu);
+        _glyphsCompletionLabel.Text = FormatCompletion(glyphs, 16);
+    }
+
+    private static void SetCompletionLabel(Label label, (int Have, int Total) counts) =>
+        label.Text = FormatCompletion(counts.Have, counts.Total);
+
+    private void ClearCompletionLabels()
+    {
+        _techCompletionLabel.Text = string.Empty;
+        _productCompletionLabel.Text = string.Empty;
+        _specialsCompletionLabel.Text = string.Empty;
+        _wordsCompletionLabel.Text = string.Empty;
+        _glyphsCompletionLabel.Text = string.Empty;
+        _fishCompletionLabel.Text = string.Empty;
+        _recipesCompletionLabel.Text = string.Empty;
+    }
+
+    private static string FormatCompletion(int have, int total)
+    {
+        int percent = total <= 0 ? 100 : (int)Math.Round(have * 100.0 / total, MidpointRounding.AwayFromZero);
+        return UiStrings.Format("discovery.completion_counter", have, total, percent);
+    }
+
+    private void AddAllMissingTech_Click(object? sender, EventArgs e) =>
+        AddAllMissingItems("KnownTech", _catalogueDatabase?.KnownTech, _techGrid);
+
+    private void AddAllMissingProducts_Click(object? sender, EventArgs e) =>
+        AddAllMissingItems("KnownProducts", _catalogueDatabase?.KnownProducts, _productGrid);
+
+    private void AddAllMissingSpecials_Click(object? sender, EventArgs e) =>
+        AddAllMissingItems("KnownSpecials", _catalogueDatabase?.KnownSpecials, _specialsGrid);
+
+    private void AddAllMissingRecipes_Click(object? sender, EventArgs e)
+    {
+        if (_savedPlayerState == null || _catalogueDatabase == null) return;
+        if (!ConfirmAndAddMissing("KnownRefinerRecipes", _catalogueDatabase.KnownRefinerRecipes, out int added))
+            return;
+
+        LoadKnownRecipes(_savedPlayerState);
+        RefreshCompletionCounters();
+        RaiseDataModified();
+        ShowAddedMessage(added);
+    }
+
+    private void AddAllMissingWords_Click(object? sender, EventArgs e)
+    {
+        if (_savedPlayerState == null || _catalogueDatabase == null) return;
+        var packGroups = _catalogueDatabase.KnownWordGroups;
+        var (have, total) = CatalogueCompletionLogic.GetWordGroupCompletion(_savedPlayerState, packGroups);
+        if (!ConfirmMissing(total - have)) return;
+
+        var (added, _) = CatalogueCompletionLogic.AddMissingWordGroups(_savedPlayerState, packGroups);
+        LoadKnownWords(_savedPlayerState);
+        RefreshCompletionCounters();
+        RaiseDataModified();
+        ShowAddedMessage(added);
+    }
+
+    private void AddAllMissingFish_Click(object? sender, EventArgs e)
+    {
+        if (_savedPlayerState == null || _catalogueDatabase == null) return;
+        var packFish = _catalogueDatabase.Fishing;
+        var (have, total) = CatalogueCompletionLogic.GetFishingCompletion(_savedPlayerState, packFish);
+        if (!ConfirmMissing(total - have)) return;
+
+        int added = CatalogueCompletionLogic.AddMissingFish(_savedPlayerState, packFish);
+        LoadKnownFish(_savedPlayerState);
+        RefreshCompletionCounters();
+        RaiseDataModified();
+        ShowAddedMessage(added);
+    }
+
+    private void AddAllMissingItems(string arrayName, IReadOnlyList<string>? packIds, DataGridView grid)
+    {
+        if (_savedPlayerState == null || packIds == null) return;
+        if (!ConfirmAndAddMissing(arrayName, packIds, out int added)) return;
+
+        LoadKnownItems(_savedPlayerState, arrayName, grid);
+        RefreshCompletionCounters();
+        RaiseDataModified();
+        ShowAddedMessage(added);
+    }
+
+    private bool ConfirmAndAddMissing(string arrayName, IReadOnlyList<string> packIds, out int added)
+    {
+        added = 0;
+        if (_savedPlayerState == null) return false;
+
+        var (have, total) = CatalogueCompletionLogic.GetCompletion(_savedPlayerState, arrayName, packIds);
+        if (!ConfirmMissing(total - have)) return false;
+
+        added = CatalogueCompletionLogic.AddMissingIds(_savedPlayerState, arrayName, packIds);
+        return true;
+    }
+
+    private bool ConfirmMissing(int missing)
+    {
+        if (missing <= 0)
+        {
+            MessageBox.Show(this,
+                UiStrings.Get("discovery.add_all_missing_none"),
+                UiStrings.Get("discovery.add_all_missing_title"),
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return false;
+        }
+
+        return MessageBox.Show(this,
+            UiStrings.Format("discovery.add_all_missing_confirm", missing),
+            UiStrings.Get("discovery.add_all_missing_title"),
+            MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+    }
+
+    private void ShowAddedMessage(int added)
+    {
+        if (added <= 0) return;
+        MessageBox.Show(this,
+            UiStrings.Format("discovery.add_all_missing_done", added),
+            UiStrings.Get("discovery.add_all_missing_title"),
+            MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
     public void ApplyUiLocalisation()
     {
         // Tab pages
@@ -1952,6 +2166,21 @@ public partial class CataloguePanel : UserControl
             _tabControl.TabPages[6].Text = UiStrings.Get("discovery.tab_fish");
             _tabControl.TabPages[7].Text = UiStrings.Get("discovery.tab_recipes");
         }
+
+        if (_tabControl.TabPages.Count >= 13)
+        {
+            _tabControl.TabPages[8].Text = UiStrings.Get("discovery.tab_wonders");
+            _tabControl.TabPages[9].Text = UiStrings.Get("discovery.tab_knowledge");
+            _tabControl.TabPages[10].Text = UiStrings.Get("discovery.group_fossils");
+            _tabControl.TabPages[11].Text = UiStrings.Get("discovery.group_raw_materials");
+            _tabControl.TabPages[12].Text = UiStrings.Get("discovery.tab_stats");
+        }
+
+        _wondersPanel.ApplyUiLocalisation();
+        _knowledgePanel.ApplyUiLocalisation();
+        _fossilsPanel.ApplyUiLocalisation();
+        _rawMaterialsPanel.ApplyUiLocalisation();
+        _discoveryStatsPanel.ApplyUiLocalisation();
 
         // Buttons
         _addTechButton.Text = UiStrings.Get("discovery.add_technology");
@@ -1975,6 +2204,16 @@ public partial class CataloguePanel : UserControl
         _travelToBtn.Text = UiStrings.Get("discovery.travel_to_system");
         _addFishBtn.Text = UiStrings.Get("discovery.add_fish_title");
         _removeFishBtn.Text = UiStrings.Get("discovery.remove_selected");
+
+        // Catalogue completion
+        _curatedNameNoticeLabel.Text = UiStrings.Get("discovery.curated_names_notice");
+        _addMissingTechBtn.Text = UiStrings.Get("discovery.add_all_missing");
+        _addMissingProductsBtn.Text = UiStrings.Get("discovery.add_all_missing");
+        _addMissingSpecialsBtn.Text = UiStrings.Get("discovery.add_all_missing");
+        _addMissingWordsBtn.Text = UiStrings.Get("discovery.add_all_missing");
+        _addMissingFishBtn.Text = UiStrings.Get("discovery.add_all_missing");
+        _addMissingRecipesBtn.Text = UiStrings.Get("discovery.add_all_missing");
+        RefreshCompletionCounters();
 
         // Filter placeholders
         _techFilterBox.PlaceholderText = UiStrings.Get("discovery.filter_items");
