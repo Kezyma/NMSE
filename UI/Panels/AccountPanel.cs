@@ -517,7 +517,7 @@ public partial class AccountPanel : UserControl
     }
 
     /// <summary>
-    /// Returns rows that need stale Known* cleanup — items the user explicitly
+    /// Returns rows that need stale Known* cleanup - items the user explicitly
     /// changed to be unlocked-but-not-redeemed (was redeemed at load, now not redeemed
     /// but still unlocked). Items that were already unlocked-but-not-redeemed at
     /// load time are excluded since their Known* state is the player's own choice.

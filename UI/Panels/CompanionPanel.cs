@@ -482,7 +482,7 @@ public partial class CompanionPanel : UserControl
                 }
                 else
                 {
-                    // Stored as a number — read via GetLong
+                    // Stored as a number - read via GetLong
                     long uaVal = comp.GetLong("UA");
                     _uaHexCheck.Checked = false;
                     _uaField.Text = uaVal.ToString(CultureInfo.InvariantCulture);
@@ -935,7 +935,7 @@ public partial class CompanionPanel : UserControl
         }
     }
 
-    /// <summary>Called when the hex checkbox changes — converts the displayed value.</summary>
+    /// <summary>Called when the hex checkbox changes - converts the displayed value.</summary>
     private void OnUAHexCheckChanged()
     {
         string text = _uaField.Text.Trim();
@@ -1446,7 +1446,7 @@ public partial class CompanionPanel : UserControl
         _activeColourMenu?.Dispose();
         _activeColourMenu = null;
 
-        // Build a 10×2 grid of colour cells hosted inside a lightweight dropdown.
+        // Build a 10x2 grid of colour cells hosted inside a lightweight dropdown.
         var palette = NmsColourPalette.GetPaletteColours("PET") ?? NmsColourPalette.PaintPalette;
         const int cols = 10;
         const int cellSize = 24;
@@ -2076,7 +2076,7 @@ public partial class CompanionPanel : UserControl
         // Block selection of restricted moves (e.g. REVIVE) - user cannot change a slot TO these IDs
         if (!string.IsNullOrEmpty(moveId) && IsRestrictedMove(moveId))
         {
-            // Revert to "None" — the move is only shown for display when the companion already has it
+            // Revert to "None" - the move is only shown for display when the companion already has it
             _moveSlotCombos[slotIndex].SelectedIndex = 0;
             moveId = "";
         }
@@ -2430,7 +2430,7 @@ public partial class CompanionPanel : UserControl
             // clamping), so an unchanged field shows the raw value itself.
             return displayValue != raw;
         }
-        return true; // No raw value recorded – assume user set it
+        return true; // No raw value recorded - assume user set it
     }
 
     private JsonObject? FindSaveDataRoot()

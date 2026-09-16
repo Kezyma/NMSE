@@ -59,7 +59,7 @@ public static class UpdateService
             if (!char.IsDigit(span[i]))
                 continue;
 
-            // Found a digit – try to consume major.minor.patch
+            // Found a digit - try to consume major.minor.patch
             int start = i;
             while (i < span.Length && (char.IsDigit(span[i]) || span[i] == '.'))
                 i++;
@@ -298,7 +298,7 @@ public static class UpdateService
     /// GitHub's web UI auto-links bare <c>#N</c> tokens, but the raw API body contains only
     /// the token text.  This method embeds RTF <c>\field</c> hyperlink records so the short
     /// label is preserved in the rendered output while the full URL is stored in the hidden
-    /// <c>\fldinst{HYPERLINK …}</c> instruction.  <see cref="System.Windows.Forms.RichTextBox"/>
+    /// <c>\fldinst{HYPERLINK ...}</c> instruction.  <see cref="System.Windows.Forms.RichTextBox"/>
     /// fires its <c>LinkClicked</c> event when such a field is clicked; the event argument
     /// carries the <em>displayed</em> text (e.g. <c>#64</c>), so the caller should resolve
     /// <c>#N</c> patterns back to a URL in the handler.

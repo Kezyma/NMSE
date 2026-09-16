@@ -21,7 +21,7 @@ namespace NMSE.UI.Controls;
 ///
 /// <para><b>Spinner behaviour:</b></para>
 /// <list type="bullet">
-///   <item>Click the ▲ / ▼ buttons, press the Up/Down arrow keys, or scroll the
+///   <item>Click the up/down buttons, press the Up/Down arrow keys, or scroll the
 ///         mouse wheel to increment/decrement by <see cref="Increment"/>.</item>
 ///   <item>Optional <see cref="Minimum"/> and <see cref="Maximum"/> bounds are
 ///         enforced on every step.</item>

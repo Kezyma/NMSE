@@ -194,7 +194,7 @@ public partial class FrigatePanel : UserControl
             try { dmg = frigate.GetInt("DamageTaken"); } catch { }
             _damageLabel.Text = dmg > 0 ? UiStrings.Format("frigate.damage_format", dmg) : UiStrings.Get("frigate.no_damage");
 
-            // Stats – store raw values for preservation, clamp for display
+            // Stats - store raw values for preservation, clamp for display
             _rawStatValues.Clear();
             var stats = frigate.GetArray("Stats");
             for (int i = 0; i < 11; i++)
@@ -551,7 +551,7 @@ public partial class FrigatePanel : UserControl
         try
         {
             var exp = _expeditions.GetObject(expIdx);
-            // Clear damaged/destroyed indices (remove in reverse to avoid O(n²))
+            // Clear damaged/destroyed indices (remove in reverse to avoid O(n^2))
             var damagedArr = exp.GetArray("DamagedFrigateIndices");
             if (damagedArr != null)
                 for (int j = damagedArr.Length - 1; j >= 0; j--) damagedArr.RemoveAt(j);

@@ -297,7 +297,7 @@ public partial class MainStatsPanel : UserControl
             }
             catch { }
 
-            // Expedition number — show field and disable difficulty combos for Expedition saves.
+            // Expedition number - show field and disable difficulty combos for Expedition saves.
             if (SaveContext.IsExpeditionSave)
             {
                 int seasonNum = playerState.GetInt("StartingSeasonNumber");
@@ -698,7 +698,7 @@ public partial class MainStatsPanel : UserControl
         // Third person camera
         try { saveData.GetObject("CommonStateData")?.Set("UsesThirdPersonCharacterCam", _thirdPersonCharCam.Checked); } catch { }
 
-        // Difficulty presets (skipped for Expedition saves — game controls these internally)
+        // Difficulty presets (skipped for Expedition saves - game controls these internally)
         if (!SaveContext.IsExpeditionSave)
         {
             try
@@ -1415,7 +1415,7 @@ public partial class MainStatsPanel : UserControl
             _tabs.TabPages[0].Text = UiStrings.Get("player.tab_general");
             _tabs.TabPages[1].Text = UiStrings.Get("player.tab_guide");
             _tabs.TabPages[2].Text = UiStrings.Get("player.tab_titles");
-            _tabs.TabPages[3].Text = UiStrings.Get("multiplayer.title");
+            _tabs.TabPages[3].Text = UiStrings.Get("player.tab_multiplayer");
         }
 
         // Buttons

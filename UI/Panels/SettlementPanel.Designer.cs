@@ -624,7 +624,7 @@ partial class SettlementPanel
         buildingLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         buildingLayout.Controls.Add(buildingHeaderPanel, 0, bRow++);
 
-        // 6 columns × 8 rows grid of building state entries (column-first ordering)
+        // 6 columns x 8 rows grid of building state entries (column-first ordering)
         const int bCols = 6;
         const int bRows = 8;
         _buildingStateFields = new ComboBox[SettlementLogic.BuildingStateSlotCount];

@@ -16,7 +16,7 @@
 #   - Wine 9.0+ (wine-stable) or bundled Wine
 #   - x86_64 Linux (Wine does not support ARM Linux)
 #
-# See docs/wine-linux-guide.md for full setup instructions.
+# See docs/dev/wine-linux-guide.md for full setup instructions.
 # ================================================================
 
 set -euo pipefail
@@ -57,7 +57,7 @@ Requirements:
   - Wine 9.0 or later (install via your package manager)
   - x86_64 Linux system
 
-For full setup instructions, see: docs/wine-linux-guide.md
+For full setup instructions, see: docs/dev/wine-linux-guide.md
 EOF
     exit 0
 }

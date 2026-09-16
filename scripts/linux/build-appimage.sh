@@ -21,6 +21,7 @@
 #
 # Output:
 #   NMSE-x86_64.AppImage  (~300-500 MB)
+#   CI renames this to NMSE-<version>-Release-x64.AppImage on release.
 #
 # Users just: chmod +x NMSE-x86_64.AppImage && ./NMSE-x86_64.AppImage
 # ================================================================

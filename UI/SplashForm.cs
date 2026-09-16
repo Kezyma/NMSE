@@ -54,7 +54,7 @@ internal sealed class SplashForm : Form
             // Non-critical. Works fine without an icon.
         }
 
-        // DPI scaling — handle is created above so DeviceDpi is valid.
+        // DPI scaling - handle is created above so DeviceDpi is valid.
         float dpiScale = (float)DeviceDpi / 96f;
 
         Size = new Size(

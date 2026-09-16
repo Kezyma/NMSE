@@ -149,7 +149,7 @@ partial class MilestonePanel
         AddField(s1c2, "milestone.spookfiends", "^SPOOK_KILLS");
         AddField(s1c2, "milestone.stone_guardians", "^STONE_KILLS");
 
-        // --- Column 2: Guilds — 2 side-by-side 3-sub-col panels ---
+        // --- Column 2: Guilds - 2 side-by-side 3-sub-col panels ---
         var guildArea = new TableLayoutPanel
         {
             AutoSize = true,
@@ -224,7 +224,7 @@ partial class MilestonePanel
             Padding = new Padding(0),
         };
 
-        // Row 1: Other Milestones/Stats — 98 fields evenly distributed (25/24/25/24)
+        // Row 1: Other Milestones/Stats - 98 fields evenly distributed (25/24/25/24)
         var section2 = CreateFourColumnSection();
         var s2c1 = GetColumnPanel(section2, 0);
         var s2c2 = GetColumnPanel(section2, 1);

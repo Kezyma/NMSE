@@ -410,7 +410,7 @@ public partial class SettlementPanel : UserControl
             while (perksArr.Length > 0 && (perksArr.GetString(perksArr.Length - 1) ?? "") == "^")
                 perksArr.RemoveAt(perksArr.Length - 1);
 
-            // Save production state – preserve raw values outside 0..ProductionMaxAmount when unchanged
+            // Save production state - preserve raw values outside 0..ProductionMaxAmount when unchanged
             var prodArr = settlement.GetArray("ProductionState");
             if (prodArr != null)
             {
@@ -537,7 +537,7 @@ public partial class SettlementPanel : UserControl
             for (int i = perksLoaded; i < PerkSlotCount; i++)
                 _perkCombos[i].SelectedIndex = 0;
 
-            // Production state – store raw amounts for preservation
+            // Production state - store raw amounts for preservation
             _productionGrid.Rows.Clear();
             _rawProductionAmounts.Clear();
             var prodArr = settlement.GetArray("ProductionState");
@@ -774,7 +774,7 @@ public partial class SettlementPanel : UserControl
 
             if (target == -2)
             {
-                // Array full and no selection – ask user which slot to overwrite
+                // Array full and no selection - ask user which slot to overwrite
                 target = ShowSlotPickerDialog();
                 if (target < 0) return; // cancelled
             }

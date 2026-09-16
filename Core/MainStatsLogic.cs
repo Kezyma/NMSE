@@ -171,7 +171,7 @@ internal static class MainStatsLogic
     /// <remarks>
     /// MainStats values (Health, Shield, Energy, Units, etc.) are INTEGER values that
     /// <b>are</b> clamped on display via <see cref="ReadStatValue"/>. The comparison is
-    /// therefore <c>uiValue == clamped(raw)</c> — the user sees the clamped value, and
+    /// therefore <c>uiValue == clamped(raw)</c> - the user sees the clamped value, and
     /// if they don't change it, the original raw is preserved.
     /// </remarks>
     private static void WriteIfChanged(JsonObject playerState, string key, decimal uiValue,

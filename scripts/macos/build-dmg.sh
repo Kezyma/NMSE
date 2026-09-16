@@ -4,7 +4,7 @@
 #
 # Creates a macOS .app bundle containing the NMSE Windows build
 # and a launcher script that finds Wine on the user's system
-# (Whisky, CrossOver, or Homebrew Wine).
+# (Gcenx Wine Builds first, then CrossOver or another Wine install).
 #
 # The resulting DMG is a drag-and-drop installer:
 #   1. Open the DMG
@@ -21,9 +21,12 @@
 #
 # Output:
 #   NMSE-x64.dmg  (~40-60 MB, Windows build + launcher)
+#   CI publishes this as NMSE-<version>-Release-x64.dmg.
 #
-# Users need Wine installed separately (Whisky recommended):
-#   brew install --cask whisky
+# Users need a supported Wine installation:
+#   - Gcenx Wine Builds (free, recommended):
+#     https://github.com/Gcenx/macOS_Wine_builds/releases
+#   - CrossOver 26 or later (paid): https://www.codeweavers.com/crossover
 # ================================================================
 
 set -euo pipefail
@@ -84,11 +87,10 @@ cat > "$MACOS/nmse-launcher" <<'LAUNCHER_EOF'
 # NMSE.exe.  Displays a dialog if Wine is not found.
 #
 # Supported Wine sources (checked in order):
-#   1. Whisky.app (free, recommended)
-#   2. Homebrew wine64 (Apple Silicon: /opt/homebrew)
-#   3. Homebrew wine64 (Intel: /usr/local)
-#   4. CrossOver.app (commercial)
-#   5. Anything on $PATH
+#   1. Gcenx Wine Builds (free, recommended)
+#   2. CrossOver.app (paid, supported)
+#   3. Other Wine installations (Whisky, Homebrew); not supported
+#   4. Anything on $PATH
 # ──────────────────────────────────────────────────────────────
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -104,16 +106,18 @@ fi
 # ── Locate Wine ───────────────────────────────────────────────
 WINE=""
 
-# Whisky (free, recommended for Apple Silicon)
-WHISKY_WINE="/Applications/Whisky.app/Contents/Resources/Libraries/Wine/bin/wine64"
-# Homebrew (Apple Silicon)
-BREW_ARM="/opt/homebrew/bin/wine64"
-# Homebrew (Intel)
-BREW_INTEL="/usr/local/bin/wine64"
-# CrossOver (commercial)
+# Gcenx Wine Builds (free, recommended)
+GCENX_STABLE="/Applications/Wine Stable.app/Contents/Resources/bin/wine64"
+GCENX_STAGING="/Applications/Wine Staging.app/Contents/Resources/bin/wine64"
+GCENX_DEVEL="/Applications/Wine Devel.app/Contents/Resources/bin/wine64"
+# CrossOver (paid, supported)
 CROSSOVER_WINE="/Applications/CrossOver.app/Contents/SharedSupport/CrossOver/bin/wine64"
+# Other Wine installations (not supported)
+WHISKY_WINE="/Applications/Whisky.app/Contents/Resources/Libraries/Wine/bin/wine64"
+BREW_ARM="/opt/homebrew/bin/wine64"
+BREW_INTEL="/usr/local/bin/wine64"
 
-for candidate in "$WHISKY_WINE" "$BREW_ARM" "$BREW_INTEL" "$CROSSOVER_WINE"; do
+for candidate in "$GCENX_STABLE" "$GCENX_STAGING" "$GCENX_DEVEL" "$CROSSOVER_WINE" "$WHISKY_WINE" "$BREW_ARM" "$BREW_INTEL"; do
     if [[ -x "$candidate" ]]; then
         WINE="$candidate"
         break
@@ -130,8 +134,8 @@ if [[ -z "$WINE" ]]; then
 fi
 
 if [[ -z "$WINE" ]]; then
-    osascript -e 'display dialog "Wine is required to run NMSE on macOS.\n\nRecommended (free): Install Whisky\nhttps://getwhisky.app\n\nbrew install --cask whisky\n\nSee the included README for other options." buttons {"OK"} default button "OK" with title "NMSE — Wine Required" with icon caution' 2>/dev/null
-    echo "ERROR: Wine not found. Install Whisky: brew install --cask whisky" >&2
+    osascript -e 'display dialog "A supported Wine installation is required to run NMSE on macOS.\n\nRecommended (free): Gcenx Wine Builds\nhttps://github.com/Gcenx/macOS_Wine_builds/releases\n\nPaid alternative: CrossOver\nhttps://www.codeweavers.com/crossover\n\nSee the included README for details." buttons {"OK"} default button "OK" with title "NMSE — Wine Required" with icon caution' 2>/dev/null
+    echo "ERROR: Wine not found. Install Gcenx Wine Builds (free) or CrossOver (paid): https://github.com/Gcenx/macOS_Wine_builds/releases" >&2
     exit 1
 fi
 
@@ -211,27 +215,25 @@ This application requires a Wine compatibility layer to run.
 
 INSTALLATION:
   1. Drag NMSE.app to your Applications folder
-  2. Install Wine (if not already installed)
+  2. Install a supported Wine (if not already installed)
   3. Double-click NMSE.app to launch
 
-WINE OPTIONS (pick one):
+WINE OPTIONS:
 
-  Whisky (Free, recommended for Apple Silicon Macs):
-    https://getwhisky.app
-    brew install --cask whisky
+  Gcenx Wine Builds (Free, recommended):
+    https://github.com/Gcenx/macOS_Wine_builds/releases
 
-  CrossOver (Paid, best Apple Silicon support):
+  CrossOver 26 or later (Paid, CodeWeavers):
     https://www.codeweavers.com/crossover
 
-  Wine via Homebrew (Intel Macs):
-    brew install --cask wine-stable
+  Note: Whisky and Homebrew Wine builds are not supported.
 
 NMS SAVE FILE LOCATIONS:
   Steam (native macOS):
     ~/Library/Application Support/HelloGames/NMS/<profile>/
 
-  Steam (via Wine/Whisky):
-    Inside the Wine bottle under:
+  Steam (via Wine):
+    Inside the Wine prefix under:
     drive_c/users/<user>/AppData/Roaming/HelloGames/NMS/
 
 For detailed instructions, visit:

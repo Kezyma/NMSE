@@ -25,7 +25,7 @@ sudo pacman -S wine            # Arch
 # 2. Download the latest NMSE Windows build from:
 #    https://github.com/vectorcmdr/NMSE/releases
 # Or use the GitHub API:
-DOWNLOAD_URL=$(curl -s https://api.github.com/repos/vectorcmdr/NMSE/releases/tags/latest \
+DOWNLOAD_URL=$(curl -s https://api.github.com/repos/vectorcmdr/NMSE/releases/latest \
   | grep -o '"browser_download_url": "[^"]*\.zip"' \
   | head -1 | cut -d'"' -f4)
 wget "$DOWNLOAD_URL" -O NMSE-latest.zip
@@ -40,14 +40,14 @@ unzip NMSE-latest.zip -d app/
 ```bash
 # Download the pre-built AppImage from the releases page:
 #   https://github.com/vectorcmdr/NMSE/releases
-# (Look for NMSE-x86_64.AppImage if available)
-chmod +x NMSE-x86_64.AppImage
-./NMSE-x86_64.AppImage
+# (Look for NMSE-<version>-Release-x64.AppImage)
+chmod +x NMSE-*-Release-x64.AppImage
+./NMSE-*-Release-x64.AppImage
 ```
 
 ### Option C: Bottles (GUI Wine manager)
 
-See `docs/bottles-linux-guide.md` for step-by-step Bottles setup, or reference `bottles.yml`
+See `docs/dev/bottles-linux-guide.md` for step-by-step Bottles setup, or reference `bottles.yml`
 for the configuration values.
 
 ## Building the AppImage
@@ -59,13 +59,14 @@ To build an AppImage yourself:
 dotnet publish NMSE.csproj -c Release -r win-x64 --self-contained
 
 # 2. Copy the publish output to your Linux machine
-scp -r bin/Release/net10.0-windows/win-x64/publish/ linux-host:~/nmse-build/
+scp -r Build/bin/Release/net10.0-windows/win-x64/publish/ linux-host:~/nmse-build/
 
 # 3. On Linux, run the build script
 ./build-appimage.sh ~/nmse-build/
 ```
 
-This produces `NMSE-x86_64.AppImage` - a single file users can download and run.
+This produces a local `NMSE-x86_64.AppImage`; CI publishes releases as
+`NMSE-<version>-Release-x64.AppImage`.
 
 ## Save File Locations
 
@@ -90,6 +91,5 @@ The `nmse.sh` launch script automatically detects and displays your save locatio
 
 ## Full Documentation
 
-- [Wine Linux Guide](../../docs/wine-linux-guide.md) - comprehensive setup and troubleshooting
-- [Bottles Guide](../../docs/bottles-linux-guide.md) - Bottles GUI Wine manager setup
-- [Cross-Platform Work Plan](../../_ref/cross-platform-workplan.md) - full migration roadmap
+- [Wine Linux Guide](../../docs/dev/wine-linux-guide.md) - comprehensive setup and troubleshooting
+- [Bottles Guide](../../docs/dev/bottles-linux-guide.md) - Bottles GUI Wine manager setup

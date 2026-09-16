@@ -112,7 +112,7 @@ public partial class RecipePanel : UserControl
     }
 
     /// <summary>
-    /// Custom paint handler for the Arrow column to render the ➡ emoji using GDI+
+    /// Custom paint handler for the Arrow column to render the right-arrow emoji using GDI+
     /// (Graphics.DrawString) with Segoe UI Emoji font for color emoji rendering.
     /// </summary>
     private void OnRecipeGridCellPainting(object? sender, DataGridViewCellPaintingEventArgs e)

@@ -166,7 +166,7 @@ partial class ExocraftPanel
         // ===================== EXOCRAFTS TAB (existing content) =====================
 
         // 
-        // _exocraftLayout — inner layout for the Exocrafts tab page
+        // _exocraftLayout - inner layout for the Exocrafts tab page
         // 
         _exocraftLayout.Dock = DockStyle.Fill;
         _exocraftLayout.ColumnCount = 2;

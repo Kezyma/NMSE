@@ -613,7 +613,7 @@ public partial class ExocraftPanel : UserControl
         _stationRegionSeedValue.Text = regionSeedDisplay ?? UiStrings.Get("common.unknown");
         _stationPositionValue.Text = FormatPosition(positionArray);
 
-        // Galaxy display — use the reality index from the station/base address,
+        // Galaxy display - use the reality index from the station/base address,
         // not the player's current galaxy. If the address is only a 12-digit portal
         // code (no galaxy info embedded), show a clear message.
         if (realityIndex.HasValue)
