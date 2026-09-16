@@ -1527,10 +1527,20 @@ public partial class StarshipPanel : UserControl
             // After optimising, update indicator to green
             SetOptimiseIndicator(true);
 
-            MessageBox.Show(this, 
-                UiStrings.Format("starship.optimise_done", result),
-                UiStrings.Get("starship.optimise"),
-                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            if (result == 0)
+            {
+                MessageBox.Show(this, 
+                    UiStrings.Get("starship.optimise_already"),
+                    UiStrings.Get("starship.optimise"),
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            else
+            {
+                MessageBox.Show(this, 
+                    UiStrings.Format("starship.optimise_done", result),
+                    UiStrings.Get("starship.optimise"),
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
 
             DataModified?.Invoke(this, EventArgs.Empty);
         }
