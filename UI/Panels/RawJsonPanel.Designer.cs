@@ -15,6 +15,11 @@ partial class RawJsonPanel
         {
             components.Dispose();
         }
+        if (disposing)
+        {
+            _isolateApplyTimer?.Dispose();
+            _isolateApplyTimer = null;
+        }
         base.Dispose(disposing);
     }
 
@@ -95,7 +100,7 @@ partial class RawJsonPanel
         _searchButton.Click += (_, _) => OnSearch();
 
         _clearSearchButton = new Button { Text = "X", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, MinimumSize = new Size(30, 0) };
-        _clearSearchButton.Click += (_, _) => { _searchBox.Text = ""; ClearHighlights(); };
+        _clearSearchButton.Click += (_, _) => ClearSearch();
 
         toolbarRow1.Controls.AddRange([_fileSelector, fileSep, _exportButton, _importButton, _diffButton,
             searchSep, _searchBox, _clearSearchButton, _searchBackButton, _searchButton]);
@@ -117,6 +122,9 @@ partial class RawJsonPanel
 
         _splitViewButton = new Button { Text = "Split View", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, MinimumSize = new Size(75, 0) };
         _splitViewButton.Click += (_, _) => ShowSplitView();
+
+        _isolateNodeCheck = new CheckBox { Text = "Isolate Node", AutoSize = true, Visible = false, Margin = new Padding(6, 6, 0, 0) };
+        _isolateNodeCheck.CheckedChanged += (_, _) => OnIsolateNodeToggled();
 
         var viewSep = new Label { Text = "|", AutoSize = true, Margin = new Padding(5, 6, 5, 0), ForeColor = ThemeManager.Effective == AppTheme.Dark ? ThemeColors.Dark.SecondaryText : Color.Gray };
 
@@ -144,7 +152,7 @@ partial class RawJsonPanel
 
         _statusLabel = new Label { Text = "", AutoSize = true, ForeColor = ThemeManager.Effective == AppTheme.Dark ? ThemeColors.Dark.SecondaryText : Color.Gray, Margin = new Padding(10, 6, 0, 0) };
 
-        toolbarRow2.Controls.AddRange([_treeViewButton, _textViewButton, _splitViewButton, viewSep,
+        toolbarRow2.Controls.AddRange([_treeViewButton, _textViewButton, _splitViewButton, _isolateNodeCheck, viewSep,
             _expandAllButton, _stopExpandBtn, _collapseAllButton,
             _formatButton, _validateButton, _statusLabel]);
 
@@ -190,7 +198,8 @@ partial class RawJsonPanel
         _treePanel.Controls.Add(_treeView);
 
         _syntaxTextBox = new JsonSyntaxTextBox { Dock = DockStyle.Fill };
-        _syntaxTextBox.TextModified += (_, _) => { _textModifiedSinceSwitch = true; InvalidateDiffCache(); RaiseDataModified(); };
+        _syntaxTextBox.TextModified += (_, _) => OnTextModified();
+        _syntaxTextBox.CaretChanged += (_, _) => UpdateTextBreadcrumb();
         _textPanel = new Panel { Dock = DockStyle.Fill, Visible = false };
         _textPanel.Controls.Add(_syntaxTextBox);
 
@@ -259,6 +268,7 @@ partial class RawJsonPanel
     private Button _treeViewButton = null!;
     private Button _textViewButton = null!;
     private Button _splitViewButton = null!;
+    private CheckBox _isolateNodeCheck = null!;
     private Button _formatButton = null!;
     private Button _validateButton = null!;
     private Button _expandAllButton = null!;

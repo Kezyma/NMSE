@@ -90,6 +90,12 @@ internal sealed class JsonSyntaxTextBox : UserControl
     /// <summary>Maps a display line index -> source line index when folds are active.</summary>
     private List<int>? _displayToSource;
     /// <summary>
+    /// Maps each source line to the line index of the innermost JSON container
+    /// enclosing it, or -1 at the document root. Rebuilt with the fold state and
+    /// used to build breadcrumb context without a full backward scan.
+    /// </summary>
+    private int[] _contextOwnerLines = [-1];
+    /// <summary>
     /// Cached join of _lines. Built lazily by the JsonText getter and
     /// invalidated whenever the document is modified or new text is loaded.
     /// This avoids keeping a redundant full-text copy alongside _lines.
@@ -102,6 +108,9 @@ internal sealed class JsonSyntaxTextBox : UserControl
 
     /// <summary>Raised when the user modifies the text.</summary>
     public event EventHandler? TextModified;
+
+    /// <summary>Raised when the caret or selection changes.</summary>
+    public event EventHandler? CaretChanged;
 
     // Public API (matches old JsonSyntaxTextBox for backward compatibility - modify carefully, future coder)
 
@@ -121,6 +130,21 @@ internal sealed class JsonSyntaxTextBox : UserControl
     /// <summary>Returns true if the control holds any meaningful content.</summary>
     public bool HasContent => _lines.Count > 1 || (_lines.Count == 1 && _lines[0].Length > 0);
 
+    /// <summary>Gets the zero-based caret line index.</summary>
+    public int CaretLine => _caretLine;
+
+    /// <summary>Gets the document lines as a read-only list without copying.</summary>
+    public IReadOnlyList<string> Lines => _lines;
+
+    /// <summary>
+    /// Gets the per-line innermost enclosing container line indices, or -1 at the
+    /// document root. Parallel to <see cref="Lines"/>.
+    /// </summary>
+    public IReadOnlyList<int> ContextOwnerLines => _contextOwnerLines;
+
+    /// <summary>Raises the <see cref="CaretChanged"/> event.</summary>
+    private void RaiseCaretChanged() => CaretChanged?.Invoke(this, EventArgs.Empty);
+
     /// <summary>
     /// Releases all document data so the control uses minimal memory while hidden.
     /// The control can be repopulated later via the JsonText setter.
@@ -132,6 +156,7 @@ internal sealed class JsonSyntaxTextBox : UserControl
         _foldRegions.Clear();
         _foldStartLookup.Clear();
         _displayToSource = null;
+        _contextOwnerLines = [-1];
         _undoStack.Clear();
         _redoStack.Clear();
         _caretLine = 0;
@@ -155,6 +180,72 @@ internal sealed class JsonSyntaxTextBox : UserControl
                 return i + 1; // 1-based
         }
         return -1;
+    }
+
+    /// <summary>
+    /// Finds all case-insensitive occurrences of a query within the document lines.
+    /// Returns 0-based line and column positions with each match length, capped at
+    /// <paramref name="maxResults"/> matches.
+    /// </summary>
+    /// <param name="query">The text to search for.</param>
+    /// <param name="maxResults">The maximum number of matches to return.</param>
+    /// <returns>The list of matches in document order.</returns>
+    public List<(int Line, int Column, int Length)> FindAll(string query, int maxResults)
+    {
+        var results = new List<(int Line, int Column, int Length)>();
+        if (string.IsNullOrEmpty(query) || maxResults <= 0) return results;
+
+        for (int i = 0; i < _lines.Count && results.Count < maxResults; i++)
+        {
+            string line = _lines[i];
+            int index = 0;
+            while (index <= line.Length - query.Length)
+            {
+                int found = line.IndexOf(query, index, StringComparison.OrdinalIgnoreCase);
+                if (found < 0) break;
+                results.Add((i, found, query.Length));
+                if (results.Count >= maxResults) break;
+                index = found + query.Length;
+            }
+        }
+        return results;
+    }
+
+    /// <summary>
+    /// Selects a range of text and scrolls it into view. The line is 0-based and the
+    /// column is a 0-based character offset within that line.
+    /// </summary>
+    /// <param name="line">The zero-based line index of the selection anchor.</param>
+    /// <param name="column">The zero-based column index of the selection anchor.</param>
+    /// <param name="length">The number of characters to select.</param>
+    public void SelectRange(int line, int column, int length)
+    {
+        if (_lines.Count == 0) return;
+        line = Math.Clamp(line, 0, _lines.Count - 1);
+        column = Math.Clamp(column, 0, _lines[line].Length);
+        int endCol = Math.Clamp(column + length, column, _lines[line].Length);
+
+        _selStartLine = line;
+        _selStartCol = column;
+        _caretLine = line;
+        _caretCol = endCol;
+        _mouseSelecting = false;
+        ResetCaretBlink();
+        EnsureCaretVisible();
+        Invalidate();
+        RaiseCaretChanged();
+    }
+
+    /// <summary>
+    /// Clears the current selection without moving the caret. Used to remove search
+    /// match highlighting when a search is cleared.
+    /// </summary>
+    public void ClearSearchSelection()
+    {
+        if (_selStartLine < 0) return;
+        ClearSelection();
+        Invalidate();
+        RaiseCaretChanged();
     }
 
     /// <summary>Gets the underlying RichTextBox (no longer used - kept for backward compatibility).</summary>
@@ -198,6 +289,7 @@ internal sealed class JsonSyntaxTextBox : UserControl
         ClearSelection();
         UpdateScrollBars();
         Invalidate();
+        RaiseCaretChanged();
     }
 
     /// <summary>Returns the 1-based line number for the current caret position.</summary>
@@ -211,6 +303,7 @@ internal sealed class JsonSyntaxTextBox : UserControl
         _caretLine = _lines.Count - 1;
         _caretCol = _lines[_caretLine].Length;
         Invalidate();
+        RaiseCaretChanged();
     }
 
     // Constructor
@@ -768,22 +861,33 @@ internal sealed class JsonSyntaxTextBox : UserControl
             }
 
             var (line, col) = HitTest(e.X, e.Y);
-            _caretLine = line;
-            _caretCol = col;
 
             if ((ModifierKeys & Keys.Shift) != 0)
             {
-                // Extend selection
-                if (!HasSelection()) { _selStartLine = _caretLine; _selStartCol = _caretCol; }
+                // Extend the selection from the existing anchor, or from the
+                // previous caret position when there is no current selection.
+                // The anchor must be captured BEFORE the caret moves to the
+                // click point, otherwise a shift-click from a bare caret
+                // produces a zero-length selection.
+                if (!HasSelection())
+                {
+                    _selStartLine = _caretLine;
+                    _selStartCol = _caretCol;
+                }
+                _caretLine = line;
+                _caretCol = col;
             }
             else
             {
+                _caretLine = line;
+                _caretCol = col;
                 _selStartLine = line;
                 _selStartCol = col;
             }
             _mouseSelecting = true;
             ResetCaretBlink();
             Invalidate();
+            RaiseCaretChanged();
         }
     }
 
@@ -824,6 +928,7 @@ internal sealed class JsonSyntaxTextBox : UserControl
             _caretLine = line;
             _caretCol = col;
             Invalidate();
+            RaiseCaretChanged();
         }
     }
 
@@ -833,7 +938,10 @@ internal sealed class JsonSyntaxTextBox : UserControl
         _mouseSelecting = false;
         // If start == end, clear selection
         if (_selStartLine == _caretLine && _selStartCol == _caretCol)
+        {
             ClearSelection();
+            RaiseCaretChanged();
+        }
     }
 
     protected override void OnMouseWheel(MouseEventArgs e)
@@ -892,41 +1000,45 @@ internal sealed class JsonSyntaxTextBox : UserControl
                 e.Handled = true;
                 break;
             case Keys.Home:
+                if (shift) StartSelectionIfNeeded();
                 if (ctrl) { _caretLine = 0; _caretCol = 0; }
                 else _caretCol = 0;
                 if (!shift) ClearSelection();
-                else StartSelectionIfNeeded();
                 EnsureCaretVisible();
                 Invalidate();
+                RaiseCaretChanged();
                 e.Handled = true;
                 break;
             case Keys.End:
+                if (shift) StartSelectionIfNeeded();
                 if (ctrl) { _caretLine = _lines.Count - 1; _caretCol = _lines[_caretLine].Length; }
                 else _caretCol = _lines[_caretLine].Length;
                 if (!shift) ClearSelection();
-                else StartSelectionIfNeeded();
                 EnsureCaretVisible();
                 Invalidate();
+                RaiseCaretChanged();
                 e.Handled = true;
                 break;
             case Keys.PageUp:
+                if (shift) StartSelectionIfNeeded();
                 _caretLine = Math.Max(0, _caretLine - VisibleLineCount);
                 _caretCol = Math.Min(_caretCol, _lines[_caretLine].Length);
                 _scrollLine = Math.Max(0, _scrollLine - VisibleLineCount);
                 if (!shift) ClearSelection();
-                else StartSelectionIfNeeded();
                 UpdateScrollBars();
                 Invalidate();
+                RaiseCaretChanged();
                 e.Handled = true;
                 break;
             case Keys.PageDown:
+                if (shift) StartSelectionIfNeeded();
                 _caretLine = Math.Min(_lines.Count - 1, _caretLine + VisibleLineCount);
                 _caretCol = Math.Min(_caretCol, _lines[_caretLine].Length);
                 _scrollLine = Math.Clamp(_scrollLine + VisibleLineCount, 0, MaxScrollLine());
                 if (!shift) ClearSelection();
-                else StartSelectionIfNeeded();
                 UpdateScrollBars();
                 Invalidate();
+                RaiseCaretChanged();
                 e.Handled = true;
                 break;
             case Keys.A when ctrl:
@@ -1015,6 +1127,7 @@ internal sealed class JsonSyntaxTextBox : UserControl
         if (!shift) ClearSelection();
         EnsureCaretVisible();
         Invalidate();
+        RaiseCaretChanged();
     }
 
     private void MoveCaretWordLeft(bool shift)
@@ -1036,6 +1149,7 @@ internal sealed class JsonSyntaxTextBox : UserControl
         if (!shift) ClearSelection();
         EnsureCaretVisible();
         Invalidate();
+        RaiseCaretChanged();
     }
 
     private void MoveCaretWordRight(bool shift)
@@ -1057,6 +1171,7 @@ internal sealed class JsonSyntaxTextBox : UserControl
         if (!shift) ClearSelection();
         EnsureCaretVisible();
         Invalidate();
+        RaiseCaretChanged();
     }
 
     private void EnsureCaretVisible()
@@ -1236,6 +1351,7 @@ internal sealed class JsonSyntaxTextBox : UserControl
         EnsureCaretVisible();
         UpdateScrollBars();
         Invalidate();
+        RaiseCaretChanged();
         TextModified?.Invoke(this, EventArgs.Empty);
     }
 
@@ -1312,6 +1428,7 @@ internal sealed class JsonSyntaxTextBox : UserControl
         UpdateScrollBars();
         EnsureCaretVisible();
         Invalidate();
+        RaiseCaretChanged();
     }
 
     private void Redo()
@@ -1335,6 +1452,7 @@ internal sealed class JsonSyntaxTextBox : UserControl
         UpdateScrollBars();
         EnsureCaretVisible();
         Invalidate();
+        RaiseCaretChanged();
     }
 
     // Folding
@@ -1352,9 +1470,13 @@ internal sealed class JsonSyntaxTextBox : UserControl
         _foldRegions.Clear();
         _foldStartLookup.Clear();
 
+        var ownerLines = new int[_lines.Count];
         var stack = new Stack<int>();
         for (int i = 0; i < _lines.Count; i++)
         {
+            // The innermost container open at the start of this line is its owner.
+            ownerLines[i] = stack.Count > 0 ? stack.Peek() : -1;
+
             string line = _lines[i];
             for (int c = 0; c < line.Length; c++)
             {
@@ -1394,6 +1516,7 @@ internal sealed class JsonSyntaxTextBox : UserControl
                 }
             }
         }
+        _contextOwnerLines = ownerLines;
         _foldRegions.Sort((a, b) => a.StartLine.CompareTo(b.StartLine));
         RebuildDisplayMap();
     }

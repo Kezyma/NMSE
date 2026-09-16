@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.IO.Compression;
 using System.Runtime;
+using System.Security.Cryptography;
+using System.Text;
 using NMSE.Models;
 using NMSE.Core;
 using NMSE.Data;
@@ -58,7 +60,40 @@ public partial class RawJsonPanel : UserControl
     /// </summary>
     private JsonObject? _capturedSaveDataRef;
 
+    /// <summary>SHA-256 of the save data baseline text, used to detect real changes.</summary>
+    private byte[]? _saveBaselineHash;
+
+    /// <summary>SHA-256 of the account data baseline text, used to detect real changes.</summary>
+    private byte[]? _accountBaselineHash;
+
+    /// <summary>Gzip-compressed bytes of the account data baseline captured at load time.</summary>
+    private byte[]? _originalAccountJsonCompressed;
+
+    /// <summary>The account object for which the baseline was captured.</summary>
+    private JsonObject? _capturedAccountDataRef;
+
     private bool _textModifiedSinceSwitch;
+
+    /// <summary>True when the split text pane is isolated to a single tree node.</summary>
+    private bool _isolateNode;
+    /// <summary>The split tree node currently shown in the isolated editor.</summary>
+    private TreeNode? _isolatedNode;
+    /// <summary>The JSON path of the isolated node, used to restore it after tree rebuilds.</summary>
+    private List<string>? _isolatedPath;
+    /// <summary>Suppresses the debounced apply while the isolated text is set programmatically.</summary>
+    private bool _suppressIsolateApply;
+    /// <summary>Suppresses the toggle handler while isolation is reset in code.</summary>
+    private bool _suppressIsolateToggle;
+    /// <summary>Suppresses tree selection handling while isolated nodes are replaced in bulk.</summary>
+    private bool _suppressIsolateReload;
+    /// <summary>The last snippet text successfully applied to the JSON data.</summary>
+    private string? _lastAppliedSnippet;
+    /// <summary>The most recent isolated edit parse error, or null when the text is valid.</summary>
+    private string? _isolateEditError;
+    /// <summary>Debounce timer for live isolated node edits (zero HWNDs).</summary>
+    private System.Threading.Timer? _isolateApplyTimer;
+    /// <summary>Delay before a live isolated edit is applied to the JSON data.</summary>
+    private const int IsolateApplyDelayMs = 500;
 
     /// <summary>
     /// Cached compact diff result from the last "Show Changes" computation.
@@ -235,6 +270,7 @@ public partial class RawJsonPanel : UserControl
     {
         var originalJson = RawJsonLogic.ToDisplayString(saveData);
         _originalSaveJsonCompressed = CompressString(originalJson);
+        _saveBaselineHash = ComputeHash(originalJson);
         _capturedSaveDataRef = saveData;
         if (!_isShowingAccount)
         {
@@ -242,6 +278,34 @@ public partial class RawJsonPanel : UserControl
             InvalidateDiffCache();
         }
     }
+
+    /// <summary>
+    /// Captures the account data baseline. Call once when the account file is loaded,
+    /// before any panel can edit the account object.
+    /// </summary>
+    /// <param name="accountData">The freshly loaded account data, or null when absent.</param>
+    public void CaptureAccountBaseline(JsonObject? accountData)
+    {
+        _accountBaselineHash = accountData == null ? null : ComputeHash(RawJsonLogic.ToDisplayString(accountData));
+        _originalAccountJsonCompressed = accountData == null ? null : CompressString(RawJsonLogic.ToDisplayString(accountData));
+        _capturedAccountDataRef = accountData;
+    }
+
+    /// <summary>True when the save data still matches the baseline captured at load time.</summary>
+    /// <param name="saveData">The in-memory save data to compare.</param>
+    public bool SaveDataMatchesBaseline(JsonObject saveData) =>
+        _saveBaselineHash != null
+        && CryptographicOperations.FixedTimeEquals(_saveBaselineHash, ComputeHash(RawJsonLogic.ToDisplayString(saveData)));
+
+    /// <summary>True when the account data still matches the baseline captured at load time.</summary>
+    /// <param name="accountData">The in-memory account data to compare, or null when absent.</param>
+    public bool AccountDataMatchesBaseline(JsonObject? accountData)
+    {
+        if (_accountBaselineHash == null || accountData == null) return true;
+        return CryptographicOperations.FixedTimeEquals(_accountBaselineHash, ComputeHash(RawJsonLogic.ToDisplayString(accountData)));
+    }
+
+    private static byte[] ComputeHash(string text) => SHA256.HashData(Encoding.UTF8.GetBytes(text));
 
     /// <summary>
     /// Marks the diff cache as stale so the next "Show Changes" click recomputes against
@@ -279,6 +343,7 @@ public partial class RawJsonPanel : UserControl
         _undoStack.Clear();
         _redoStack.Clear();
         UpdateFileSelector();
+        ResetIsolationState();
         if (_viewMode == ViewMode.Tree)
             BuildTree(saveData);
         else if (_viewMode == ViewMode.Text)
@@ -287,6 +352,8 @@ public partial class RawJsonPanel : UserControl
             LoadSplitView(saveData);
         _statusLabel.Text = UiStrings.Format("raw_json.loaded_keys", saveData.Size().ToString("N0", CultureInfo.CurrentCulture));
         _statusLabel.ForeColor = StatusColor(ThemeManager.Effective, Color.Gray, ThemeColors.Dark.SecondaryText);
+        ResetSearchState();
+        UpdateTextBreadcrumb();
     }
 
     /// <summary>
@@ -340,9 +407,15 @@ public partial class RawJsonPanel : UserControl
             _isShowingAccount = true;
             _treeModified = false;
             InvalidateDisplayCache();
-            _originalJsonCompressed = CompressString(RawJsonLogic.ToDisplayString(_accountData));
+            // Reuse the baseline captured when the account file was loaded so edits made
+            // by other panels (Fossils / Raw Materials tabs) are still visible in the diff.
+            if (ReferenceEquals(_accountData, _capturedAccountDataRef) && _originalAccountJsonCompressed != null)
+                _originalJsonCompressed = _originalAccountJsonCompressed;
+            else
+                _originalJsonCompressed = CompressString(RawJsonLogic.ToDisplayString(_accountData));
             _undoStack.Clear();
             _redoStack.Clear();
+            ResetIsolationState();
             if (_viewMode == ViewMode.Tree)
                 BuildTree(_accountData);
             else if (_viewMode == ViewMode.Text)
@@ -351,6 +424,8 @@ public partial class RawJsonPanel : UserControl
                 LoadSplitView(_accountData);
             _statusLabel.Text = UiStrings.Format("raw_json.edited_account", _accountData.Size().ToString("N0", CultureInfo.CurrentCulture));
             _statusLabel.ForeColor = StatusColor(ThemeManager.Effective, Color.DarkBlue, ThemeColors.Dark.InfoBlue);
+            ResetSearchState();
+            UpdateTextBreadcrumb();
         }
         else if (_saveData != null)
         {
@@ -367,6 +442,7 @@ public partial class RawJsonPanel : UserControl
                 _originalJsonCompressed = CompressString(RawJsonLogic.ToDisplayString(_saveData));
             _undoStack.Clear();
             _redoStack.Clear();
+            ResetIsolationState();
             if (_viewMode == ViewMode.Tree)
                 BuildTree(_saveData);
             else if (_viewMode == ViewMode.Text)
@@ -375,6 +451,8 @@ public partial class RawJsonPanel : UserControl
                 LoadSplitView(_saveData);
             _statusLabel.Text = UiStrings.Format("raw_json.loaded_keys", _saveData.Size().ToString("N0", CultureInfo.CurrentCulture));
             _statusLabel.ForeColor = StatusColor(ThemeManager.Effective, Color.Gray, ThemeColors.Dark.SecondaryText);
+            ResetSearchState();
+            UpdateTextBreadcrumb();
         }
     }
 
@@ -418,6 +496,8 @@ public partial class RawJsonPanel : UserControl
             _syntaxTextBox.JsonText = GetDisplayString(data);
         else
             LoadSplitView(data);
+        ResetSearchState();
+        UpdateTextBreadcrumb();
     }
 
     /// <summary>
@@ -432,6 +512,18 @@ public partial class RawJsonPanel : UserControl
             _treeModified = false;
             return _saveData;
         }
+
+        if (_viewMode == ViewMode.Split && _isolateNode)
+        {
+            if (!FlushIsolatedEdits())
+            {
+                MessageBox.Show(this, UiStrings.Format("raw_json.invalid_json", _isolateEditError ?? ""), UiStrings.Get("raw_json.validation_error"),
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return null;
+            }
+            return ActiveData;
+        }
+
         string jsonText = _viewMode == ViewMode.Split ? _splitSyntaxTextBox.JsonText : _syntaxTextBox.JsonText;
         try
         {
@@ -464,12 +556,28 @@ public partial class RawJsonPanel : UserControl
         _collapseAllButton.Visible = showTreeControls;
         _formatButton.Visible = mode == ViewMode.Text;
         _validateButton.Visible = mode == ViewMode.Text;
-        _searchBox.Visible = showTreeControls;
-        _searchBackButton.Visible = showTreeControls;
-        _searchButton.Visible = showTreeControls;
-        _clearSearchButton.Visible = showTreeControls;
-        _breadcrumbPanel.Visible = showTreeControls;
+
+        // Search and breadcrumb navigation are available in every view.
+        _searchBox.Visible = true;
+        _searchBackButton.Visible = true;
+        _searchButton.Visible = true;
+        _clearSearchButton.Visible = true;
+        _breadcrumbPanel.Visible = true;
+
+        // Node isolation applies to the split text pane only.
+        _isolateNodeCheck.Visible = mode == ViewMode.Split;
     }
+
+    /// <summary>The tree view visible for the active view mode, or null in text view.</summary>
+    private TreeView? ActiveTreeView => _viewMode switch
+    {
+        ViewMode.Tree => _treeView,
+        ViewMode.Split => _splitTreeView,
+        _ => null
+    };
+
+    /// <summary>The JSON data object displayed in the active view.</summary>
+    private JsonObject? ActiveData => _isShowingAccount ? _accountData : _saveData;
 
     /// <summary>
     /// Switches the panel to tree view and attempts to preserve any pending text edits.
@@ -477,6 +585,8 @@ public partial class RawJsonPanel : UserControl
     private void ShowTreeView()
     {
         if (_viewMode == ViewMode.Tree) return;
+        bool wasIsolated = _isolateNode;
+        LeaveIsolation();
         var previousMode = _viewMode;
         _viewMode = ViewMode.Tree;
         SetViewModeButtons(ViewMode.Tree);
@@ -495,11 +605,20 @@ public partial class RawJsonPanel : UserControl
             InvalidateDisplayCache();
             TryRebuildTreeFromText(_splitSyntaxTextBox.JsonText);
         }
+        else if (wasIsolated)
+        {
+            // Isolated edits were applied directly to the data, so the hidden main
+            // tree must be rebuilt to reflect them.
+            var data = ActiveData;
+            if (data != null)
+                BuildTree(data);
+        }
         _textModifiedSinceSwitch = false;
 
         // Free memory held by hidden text views
         _syntaxTextBox.ClearContent();
         _splitSyntaxTextBox.ClearContent();
+        ResetSearchState();
     }
 
     /// <summary>
@@ -508,6 +627,7 @@ public partial class RawJsonPanel : UserControl
     private void ShowTextView()
     {
         if (_viewMode == ViewMode.Text) return;
+        LeaveIsolation();
         _viewMode = ViewMode.Text;
         _textModifiedSinceSwitch = false;
         SetViewModeButtons(ViewMode.Text);
@@ -522,6 +642,8 @@ public partial class RawJsonPanel : UserControl
 
         // Free memory held by the hidden split text view
         _splitSyntaxTextBox.ClearContent();
+        ResetSearchState();
+        UpdateTextBreadcrumb();
     }
 
     /// <summary>
@@ -552,6 +674,7 @@ public partial class RawJsonPanel : UserControl
 
         // Free memory held by the hidden text view
         _syntaxTextBox.ClearContent();
+        ResetSearchState();
     }
 
     /// <summary>
@@ -560,7 +683,35 @@ public partial class RawJsonPanel : UserControl
     /// <param name="data">The JSON object to display in split view.</param>
     private void LoadSplitView(JsonObject data)
     {
-        // Build tree in split tree view
+        // Apply any pending isolated edit against the old tree before rebuilding,
+        // so the new tree reflects the latest text.
+        if (_isolateNode)
+            FlushIsolatedEdits();
+
+        _suppressIsolateReload = _isolateNode;
+        BuildSplitTree(data);
+        _suppressIsolateReload = false;
+
+        // Set split ratio: tree = 1/3, text = 2/3
+        if (_splitContainer.Width > 0)
+            _splitContainer.SplitterDistance = _splitContainer.Width / 3;
+
+        if (_isolateNode)
+        {
+            RestoreIsolatedNode();
+            return;
+        }
+
+        // Load text in split syntax text box
+        _splitSyntaxTextBox.JsonText = GetDisplayString(data);
+    }
+
+    /// <summary>
+    /// Builds the split view tree nodes from the given JSON object.
+    /// </summary>
+    /// <param name="data">The JSON object to display in the split tree.</param>
+    private void BuildSplitTree(JsonObject data)
+    {
         _splitTreeView.BeginUpdate();
         _splitTreeView.Nodes.Clear();
         var rootNode = new TreeNode("Root") { Tag = new NodeTag(data, null, null), ImageIndex = 0, SelectedImageIndex = 0 };
@@ -568,13 +719,6 @@ public partial class RawJsonPanel : UserControl
         _splitTreeView.Nodes.Add(rootNode);
         rootNode.Expand();
         _splitTreeView.EndUpdate();
-
-        // Set split ratio: tree = 1/3, text = 2/3
-        if (_splitContainer.Width > 0)
-            _splitContainer.SplitterDistance = _splitContainer.Width / 3;
-
-        // Load text in split syntax text box
-        _splitSyntaxTextBox.JsonText = GetDisplayString(data);
     }
 
     /// <summary>
@@ -584,7 +728,21 @@ public partial class RawJsonPanel : UserControl
     /// <param name="e">Event arguments for the tree selection.</param>
     private void OnSplitTreeNodeSelected(object? sender, TreeViewEventArgs e)
     {
-        UpdateBreadcrumb(e.Node);
+        UpdateBreadcrumb(_splitTreeView, e.Node);
+
+        if (_suppressIsolateReload) return;
+
+        if (_isolateNode)
+        {
+            // Our own node replacement re-selects the same node; do not reload the
+            // snippet in that case or the caret would jump while typing.
+            if (!ReferenceEquals(e.Node, _isolatedNode))
+            {
+                FlushIsolatedEdits();
+                LoadIsolatedNode(e.Node);
+            }
+            return;
+        }
 
         // Sync text view to the selected node's location by searching lines
         // directly. This avoids materializing the entire document string.
@@ -602,6 +760,13 @@ public partial class RawJsonPanel : UserControl
     /// </summary>
     private void OnSplitTextModified()
     {
+        if (_isolateNode)
+        {
+            if (_suppressIsolateApply) return;
+            ScheduleIsolateApply();
+            return;
+        }
+
         _textModifiedSinceSwitch = true;
         InvalidateDiffCache();
         RaiseDataModified();
@@ -630,6 +795,325 @@ public partial class RawJsonPanel : UserControl
             _statusLabel.Text = UiStrings.Format("raw_json.parse_error", ex.Message);
             _statusLabel.ForeColor = StatusColor(ThemeManager.Effective, Color.Red, ThemeColors.Dark.ErrorRed);
         }
+    }
+
+    #endregion
+
+    #region Isolated Node Editing
+
+    /// <summary>
+    /// Handles toggling of the isolated node editor in split view.
+    /// </summary>
+    private void OnIsolateNodeToggled()
+    {
+        if (_suppressIsolateToggle) return;
+
+        if (!_isolateNodeCheck.Checked)
+        {
+            FlushIsolatedEdits();
+            _isolateNode = false;
+            _isolatedNode = null;
+            _isolatedPath = null;
+            _lastAppliedSnippet = null;
+            _isolateEditError = null;
+            _textModifiedSinceSwitch = false;
+            var data = ActiveData;
+            if (data != null)
+                _splitSyntaxTextBox.JsonText = GetDisplayString(data);
+            return;
+        }
+
+        if (_viewMode != ViewMode.Split)
+        {
+            _suppressIsolateToggle = true;
+            _isolateNodeCheck.Checked = false;
+            _suppressIsolateToggle = false;
+            return;
+        }
+
+        _isolateNode = true;
+        var node = _splitTreeView.SelectedNode ?? (_splitTreeView.Nodes.Count > 0 ? _splitTreeView.Nodes[0] : null);
+        LoadIsolatedNode(node);
+    }
+
+    /// <summary>
+    /// Applies any pending isolated edit and clears isolation when leaving split view.
+    /// </summary>
+    private void LeaveIsolation()
+    {
+        if (!_isolateNode) return;
+        FlushIsolatedEdits();
+        ResetIsolationState();
+    }
+
+    /// <summary>
+    /// Clears isolated editing state without touching the text pane contents.
+    /// </summary>
+    private void ResetIsolationState()
+    {
+        _isolateApplyTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+        _isolateNode = false;
+        _isolatedNode = null;
+        _isolatedPath = null;
+        _lastAppliedSnippet = null;
+        _isolateEditError = null;
+        _textModifiedSinceSwitch = false;
+        _suppressIsolateToggle = true;
+        _isolateNodeCheck.Checked = false;
+        _suppressIsolateToggle = false;
+    }
+
+    /// <summary>
+    /// Re-selects and reloads the isolated node after the split tree was rebuilt.
+    /// Falls back to the root when the previous path no longer exists.
+    /// </summary>
+    private void RestoreIsolatedNode()
+    {
+        var node = NavigateTreeToPath(_splitTreeView, _isolatedPath ?? new List<string>());
+        if (node == null && _splitTreeView.Nodes.Count > 0)
+            node = _splitTreeView.Nodes[0];
+        _isolatedNode = node;
+        if (node != null)
+        {
+            _splitTreeView.SelectedNode = node;
+            LoadIsolatedNode(node);
+        }
+    }
+
+    /// <summary>
+    /// Loads the given tree node into the isolated text editor.
+    /// </summary>
+    /// <param name="node">The node to isolate, or null to clear the isolated node.</param>
+    private void LoadIsolatedNode(TreeNode? node)
+    {
+        if (node?.Tag is not NodeTag tag)
+        {
+            _isolatedNode = null;
+            return;
+        }
+
+        _isolatedNode = node;
+        _isolatedPath = GetNodePath(node);
+        _isolateEditError = null;
+        // The split text now holds a fragment, never a complete document.
+        _textModifiedSinceSwitch = false;
+
+        string snippet = RawJsonLogic.SerializeNodeSnippet(
+            tag.Parent == null ? null : tag.Key, tag.Value);
+
+        _suppressIsolateApply = true;
+        _splitSyntaxTextBox.JsonText = snippet;
+        _suppressIsolateApply = false;
+        _lastAppliedSnippet = NormalizeLineEndings(snippet);
+
+        _statusLabel.Text = UiStrings.Format("raw_json.isolate_editing", tag.Key ?? "Root");
+        _statusLabel.ForeColor = StatusColor(ThemeManager.Effective, Color.Blue, ThemeColors.Dark.InfoBlue);
+    }
+
+    /// <summary>
+    /// Builds the JSON path of a tree node from its tag keys.
+    /// </summary>
+    /// <param name="node">The node whose path is requested.</param>
+    /// <returns>The path segments from the root to the node.</returns>
+    private static List<string> GetNodePath(TreeNode node)
+    {
+        var parts = new List<string>();
+        var current = node;
+        while (current?.Parent != null)
+        {
+            if (current.Tag is NodeTag tag && tag.Key != null)
+                parts.Add(tag.Key);
+            current = current.Parent;
+        }
+        parts.Reverse();
+        return parts;
+    }
+
+    /// <summary>
+    /// Normalizes line endings to LF so text comparisons ignore platform differences.
+    /// </summary>
+    /// <param name="text">The text to normalize.</param>
+    /// <returns>The normalized text.</returns>
+    private static string NormalizeLineEndings(string text) =>
+        text.Replace("\r\n", "\n").Replace('\r', '\n');
+
+    /// <summary>
+    /// Schedules a debounced apply of the isolated node text.
+    /// </summary>
+    private void ScheduleIsolateApply()
+    {
+        _isolateApplyTimer ??= new System.Threading.Timer(OnIsolateApplyTimer, null, Timeout.Infinite, Timeout.Infinite);
+        _isolateApplyTimer.Change(IsolateApplyDelayMs, Timeout.Infinite);
+    }
+
+    private void OnIsolateApplyTimer(object? state)
+    {
+        if (IsDisposed || !IsHandleCreated) return;
+        try
+        {
+            BeginInvoke(() => ApplyIsolatedEdit());
+        }
+        catch (ObjectDisposedException) { }
+        catch (InvalidOperationException) { }
+    }
+
+    /// <summary>
+    /// Applies any pending isolated edit immediately, cancelling the debounce.
+    /// </summary>
+    /// <returns>True when the text is valid (or nothing is pending); false on parse error.</returns>
+    private bool FlushIsolatedEdits()
+    {
+        _isolateApplyTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+        if (!_isolateNode) return true;
+        return ApplyIsolatedEdit();
+    }
+
+    /// <summary>
+    /// Applies the current isolated text to the in-memory JSON data.
+    /// </summary>
+    /// <returns>True when applied (or nothing changed); false when the text is invalid.</returns>
+    private bool ApplyIsolatedEdit()
+    {
+        if (!_isolateNode || _isolatedNode?.Tag is not NodeTag tag)
+            return true;
+
+        string text = _splitSyntaxTextBox.JsonText;
+        string normalizedText = NormalizeLineEndings(text);
+        if (normalizedText == _lastAppliedSnippet)
+            return true;
+
+        try
+        {
+            if (tag.Parent == null && tag.Value is JsonObject root)
+            {
+                RawJsonLogic.ApplyRootSnippet(root, text);
+                _lastAppliedSnippet = normalizedText;
+                _isolateEditError = null;
+                MarkIsolatedEditApplied();
+                RefreshIsolatedRoot();
+                SetIsolatedEditAppliedStatus();
+                return true;
+            }
+
+            if (tag.Parent is JsonObject parentObj && tag.Key != null && !tag.Key.StartsWith('['))
+            {
+                var (newKey, value) = RawJsonLogic.ParseObjectMemberSnippet(text);
+                if (!string.Equals(newKey, tag.Key, StringComparison.Ordinal))
+                {
+                    if (!parentObj.Rename(tag.Key, newKey))
+                    {
+                        _isolateEditError = UiStrings.Format("raw_json.duplicate_key_msg", newKey);
+                        _statusLabel.Text = _isolateEditError;
+                        _statusLabel.ForeColor = StatusColor(ThemeManager.Effective, Color.Red, ThemeColors.Dark.ErrorRed);
+                        return false;
+                    }
+                    tag.Key = newKey;
+                }
+                tag.Value = value;
+                parentObj.Set(newKey, value);
+            }
+            else if (tag.Parent is JsonArray parentArr && tag.Key != null && tag.Key.StartsWith('['))
+            {
+                object? value = RawJsonLogic.ParseValueSnippet(text);
+                parentArr.Set(ParseArrayIndex(tag.Key), value);
+                tag.Value = value;
+            }
+            else
+            {
+                return true;
+            }
+
+            _lastAppliedSnippet = normalizedText;
+            _isolateEditError = null;
+            MarkIsolatedEditApplied();
+            ReplaceIsolatedTreeNode(tag);
+            if (_isolatedNode != null)
+                _isolatedPath = GetNodePath(_isolatedNode);
+            SetIsolatedEditAppliedStatus();
+            return true;
+        }
+        catch (JsonException ex)
+        {
+            _isolateEditError = ex.Message;
+            _statusLabel.Text = UiStrings.Format("raw_json.parse_error", ex.Message);
+            _statusLabel.ForeColor = StatusColor(ThemeManager.Effective, Color.Red, ThemeColors.Dark.ErrorRed);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Marks the data as modified after a successful isolated edit.
+    /// </summary>
+    private void MarkIsolatedEditApplied()
+    {
+        _treeModified = true;
+        RaiseDataModified();
+        InvalidateDisplayCache();
+        InvalidateDiffCache();
+    }
+
+    /// <summary>
+    /// Updates the status bar after a successful isolated edit.
+    /// </summary>
+    private void SetIsolatedEditAppliedStatus()
+    {
+        _statusLabel.Text = UiStrings.Get("raw_json.value_modified");
+        _statusLabel.ForeColor = StatusColor(ThemeManager.Effective, Color.Green, ThemeColors.Dark.SuccessGreen);
+    }
+
+    /// <summary>
+    /// Rebuilds the split tree node for the isolated node after its value changed.
+    /// </summary>
+    /// <param name="tag">The updated node tag.</param>
+    private void ReplaceIsolatedTreeNode(NodeTag tag)
+    {
+        var node = _isolatedNode;
+        if (node?.Parent == null || tag.Key == null) return;
+
+        var parentNode = node.Parent;
+        var replacement = CreateValueNode(tag.Key, tag.Value, tag.Parent!, 2, 0);
+        replacement.BackColor = node.BackColor;
+        int index = parentNode.Nodes.IndexOf(node);
+
+        bool wasSelected = ReferenceEquals(_splitTreeView.SelectedNode, node);
+        _suppressIsolateReload = true;
+        _splitTreeView.BeginUpdate();
+        if (index >= 0)
+        {
+            parentNode.Nodes.RemoveAt(index);
+            parentNode.Nodes.Insert(index, replacement);
+        }
+        UpdateContainerNodeText(parentNode);
+        _isolatedNode = replacement;
+        if (wasSelected)
+            _splitTreeView.SelectedNode = replacement;
+        _splitTreeView.EndUpdate();
+        _suppressIsolateReload = false;
+
+        // Keep search result highlighting pointed at the replacement node.
+        for (int i = 0; i < _searchResults.Count; i++)
+        {
+            if (ReferenceEquals(_searchResults[i], node))
+                _searchResults[i] = replacement;
+        }
+    }
+
+    /// <summary>
+    /// Rebuilds the split tree after a root-level isolated edit. The root text is
+    /// intentionally not reloaded so the caret position is preserved.
+    /// </summary>
+    private void RefreshIsolatedRoot()
+    {
+        if (_isolatedNode?.Tag is not NodeTag tag || tag.Value is not JsonObject root) return;
+
+        _suppressIsolateReload = true;
+        BuildSplitTree(root);
+        var rootNode = _splitTreeView.Nodes.Count > 0 ? _splitTreeView.Nodes[0] : null;
+        _isolatedNode = rootNode;
+        _isolatedPath = new List<string>();
+        if (rootNode != null)
+            _splitTreeView.SelectedNode = rootNode;
+        _suppressIsolateReload = false;
     }
 
     #endregion
@@ -896,7 +1380,7 @@ public partial class RawJsonPanel : UserControl
         using var g = Graphics.FromImage(bmp);
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
-        // Pixel unit is intentional: rendering into a fixed 16×16 bitmap, not UI text.
+        // Pixel unit is intentional: rendering into a fixed 16x16 bitmap, not UI text.
         using var font = new Font("Consolas", 12f, FontStyle.Bold, GraphicsUnit.Pixel);
         using var brush = new SolidBrush(color);
         var size = g.MeasureString(text, font);
@@ -1010,6 +1494,16 @@ public partial class RawJsonPanel : UserControl
         var editBox = _inlineEditBox;
         _inlineEditBox = null;
 
+        // A double-click starts an inline edit; if the user clicks away without
+        // changing the text, treat it as a no-op and do not mark the save dirty.
+        if (editBox.Text == RawJsonLogic.FormatValueForEdit(tag.Value))
+        {
+            _treeView.Controls.Remove(editBox);
+            editBox.Dispose();
+            _treeView.Focus();
+            return;
+        }
+
         string newVal = editBox.Text.Trim();
         object? parsed = RawJsonLogic.ParseInputValue(newVal, tag.Value);
         _undoStack.Push(new UndoAction(UndoActionType.Edit, tag.Parent, tag.Key!, tag.Value, parsed));
@@ -1083,6 +1577,9 @@ public partial class RawJsonPanel : UserControl
 
         if (dialog.ShowDialog(this) == DialogResult.OK)
         {
+            if (textBox.Text == currentVal)
+                return; // No change; do not mark the save dirty.
+
             string newVal = textBox.Text.Trim();
             object? parsed = RawJsonLogic.ParseInputValue(newVal, tag.Value);
             _undoStack.Push(new UndoAction(UndoActionType.Edit, tag.Parent, tag.Key!, tag.Value, parsed));
@@ -1359,19 +1856,74 @@ public partial class RawJsonPanel : UserControl
 
     #region Search
 
+    /// <summary>Maximum number of search matches collected for either view.</summary>
+    private const int MaxSearchResults = 500;
+
     private readonly List<TreeNode> _searchResults = new();
     private int _searchIndex;
     private string _lastSearchQuery = "";
 
     private readonly List<List<string>> _searchPaths = new();
 
+    private readonly List<(int Line, int Column, int Length)> _textMatches = new();
+    private int _textMatchIndex;
+
     /// <summary>
-    /// Executes a search over the current JSON data and selects the first match.
+    /// Handles global search shortcuts so they work in every view and child control.
+    /// </summary>
+    /// <param name="msg">The window message being processed.</param>
+    /// <param name="keyData">The key combination being pressed.</param>
+    /// <returns>True when the key was handled.</returns>
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        if (keyData == (Keys.Control | Keys.F))
+        {
+            _searchBox.Focus();
+            _searchBox.SelectAll();
+            return true;
+        }
+        if (keyData == (Keys.Shift | Keys.F3))
+        {
+            FindPrevious();
+            return true;
+        }
+        if (keyData == Keys.F3)
+        {
+            FindNext();
+            return true;
+        }
+        return base.ProcessCmdKey(ref msg, keyData);
+    }
+
+    /// <summary>
+    /// Clears the search box, highlights and any active text match.
+    /// </summary>
+    private void ClearSearch()
+    {
+        _searchBox.Text = "";
+        _lastSearchQuery = "";
+        _searchPaths.Clear();
+        ClearHighlights();
+    }
+
+    /// <summary>
+    /// Executes a search over the active view and selects the first match.
     /// </summary>
     private void OnSearch()
     {
         string query = _searchBox.Text.Trim();
         if (string.IsNullOrEmpty(query)) return;
+
+        if (_viewMode == ViewMode.Text)
+        {
+            if (query == _lastSearchQuery && _textMatches.Count > 0)
+            {
+                FindNext();
+                return;
+            }
+            SearchText(query);
+            return;
+        }
 
         // If the query hasn't changed and we have results, advance to next
         if (query == _lastSearchQuery && _searchPaths.Count > 0)
@@ -1382,16 +1934,16 @@ public partial class RawJsonPanel : UserControl
 
         _lastSearchQuery = query;
         ClearHighlights();
-        _searchResults.Clear();
         _searchPaths.Clear();
         _searchIndex = 0;
 
-        if (_saveData == null) return;
+        var data = ActiveData;
+        if (data == null) return;
 
         // Search the JSON data structure directly (not the tree nodes)
         // to avoid force-expanding the entire tree.
         var path = new List<string>();
-        SearchJsonData(_saveData, query.ToLowerInvariant(), path);
+        SearchJsonData(data, query.ToLowerInvariant(), path);
 
         if (_searchPaths.Count > 0)
         {
@@ -1408,10 +1960,67 @@ public partial class RawJsonPanel : UserControl
     }
 
     /// <summary>
-    /// Moves selection to the next search result in the tree.
+    /// Runs a case-insensitive text search over the text view and selects the first match.
+    /// </summary>
+    /// <param name="query">The search query.</param>
+    private void SearchText(string query)
+    {
+        _lastSearchQuery = query;
+        ClearHighlights();
+
+        _textMatches.AddRange(_syntaxTextBox.FindAll(query, MaxSearchResults));
+        _textMatchIndex = 0;
+
+        if (_textMatches.Count > 0)
+        {
+            SelectTextMatch(0);
+            _statusLabel.Text = UiStrings.Format("raw_json.search_found", _textMatches.Count);
+            _statusLabel.ForeColor = StatusColor(ThemeManager.Effective, Color.Green, ThemeColors.Dark.SuccessGreen);
+        }
+        else
+        {
+            _statusLabel.Text = UiStrings.Get("raw_json.no_matches_found");
+            _statusLabel.ForeColor = StatusColor(ThemeManager.Effective, Color.Red, ThemeColors.Dark.ErrorRed);
+        }
+    }
+
+    /// <summary>
+    /// Selects the text search match at the given index and scrolls it into view.
+    /// </summary>
+    /// <param name="index">The zero-based match index.</param>
+    private void SelectTextMatch(int index)
+    {
+        if (index < 0 || index >= _textMatches.Count) return;
+        var match = _textMatches[index];
+        _syntaxTextBox.SelectRange(match.Line, match.Column, match.Length);
+    }
+
+    /// <summary>
+    /// Clears the search state and any highlights, keeping the search box text.
+    /// </summary>
+    private void ResetSearchState()
+    {
+        _lastSearchQuery = "";
+        _searchIndex = 0;
+        _searchPaths.Clear();
+        ClearHighlights();
+        ClearBreadcrumb();
+    }
+
+    /// <summary>
+    /// Moves selection to the next search result in the active view.
     /// </summary>
     private void FindNext()
     {
+        if (_viewMode == ViewMode.Text)
+        {
+            if (_textMatches.Count == 0) return;
+            _textMatchIndex = (_textMatchIndex + 1) % _textMatches.Count;
+            SelectTextMatch(_textMatchIndex);
+            _statusLabel.Text = UiStrings.Format("raw_json.match_position", _textMatchIndex + 1, _textMatches.Count);
+            return;
+        }
+
         if (_searchPaths.Count == 0) return;
 
         // Dim previous result
@@ -1424,10 +2033,19 @@ public partial class RawJsonPanel : UserControl
     }
 
     /// <summary>
-    /// Moves selection to the previous search result in the tree.
+    /// Moves selection to the previous search result in the active view.
     /// </summary>
     private void FindPrevious()
     {
+        if (_viewMode == ViewMode.Text)
+        {
+            if (_textMatches.Count == 0) return;
+            _textMatchIndex = (_textMatchIndex - 1 + _textMatches.Count) % _textMatches.Count;
+            SelectTextMatch(_textMatchIndex);
+            _statusLabel.Text = UiStrings.Format("raw_json.match_position", _textMatchIndex + 1, _textMatches.Count);
+            return;
+        }
+
         if (_searchPaths.Count == 0) return;
         if (_searchIndex >= 0 && _searchIndex < _searchResults.Count)
             _searchResults[_searchIndex].BackColor = ThemeManager.Effective == AppTheme.Dark ? ThemeColors.Dark.SearchHighlightBackground : ThemeColors.Light.SearchHighlightBackground;
@@ -1444,15 +2062,14 @@ public partial class RawJsonPanel : UserControl
     /// <param name="path">The path to the current value within the JSON structure.</param>
     private void SearchJsonData(object? value, string query, List<string> path)
     {
-        const int maxResults = 500;
-        if (_searchPaths.Count >= maxResults) return;
+        if (_searchPaths.Count >= MaxSearchResults) return;
 
         if (value is JsonObject obj)
         {
             var names = obj.Names();
             for (int i = 0; i < names.Count; i++)
             {
-                if (_searchPaths.Count >= maxResults) return;
+                if (_searchPaths.Count >= MaxSearchResults) return;
                 string key = names[i];
                 object? child = obj.Get(key);
                 path.Add(key);
@@ -1481,7 +2098,7 @@ public partial class RawJsonPanel : UserControl
         {
             for (int i = 0; i < arr.Length; i++)
             {
-                if (_searchPaths.Count >= maxResults) return;
+                if (_searchPaths.Count >= MaxSearchResults) return;
                 object? child = arr.Get(i);
                 path.Add($"[{i}]");
 
@@ -1515,54 +2132,75 @@ public partial class RawJsonPanel : UserControl
     }
 
     /// <summary>
-    /// Navigates the tree view to the specified search result index.
+    /// Navigates the active tree view to the specified search result index.
     /// </summary>
     /// <param name="index">The zero-based search result index.</param>
     private void NavigateToSearchResult(int index)
     {
         if (index < 0 || index >= _searchPaths.Count) return;
 
-        var path = _searchPaths[index];
-        TreeNode? current = _treeView.Nodes.Count > 0 ? _treeView.Nodes[0] : null; // Root node
+        var tree = ActiveTreeView;
+        if (tree == null) return;
 
-        _treeView.BeginUpdate();
-        for (int p = 0; p < path.Count && current != null; p++)
-        {
-            // Ensure lazy children are expanded
-            if (current.Nodes.Count == 1 && current.Nodes[0].Tag is LazyTag)
-            {
-                var tag = current.Tag as NodeTag;
-                current.Nodes.Clear();
-                if (tag?.Value is JsonObject obj)
-                    PopulateObjectNode(current, obj, maxDepth: 2, currentDepth: 0);
-                else if (tag?.Value is JsonArray arr)
-                    PopulateArrayNode(current, arr, maxDepth: 2, currentDepth: 0);
-            }
-
-            current.Expand();
-            string segment = path[p];
-
-            // Find matching child node
-            TreeNode? found = null;
-            foreach (TreeNode child in current.Nodes)
-            {
-                if (child.Tag is NodeTag childTag && childTag.Key == segment)
-                {
-                    found = child;
-                    break;
-                }
-            }
-            current = found;
-        }
-        _treeView.EndUpdate();
+        var current = NavigateTreeToPath(tree, _searchPaths[index]);
 
         if (current != null)
         {
             _searchResults.Add(current);
             current.BackColor = ThemeManager.Effective == AppTheme.Dark ? ThemeColors.Dark.SearchHighlightCurrentBackground : ThemeColors.Light.SearchHighlightCurrentBackground;
-            _treeView.SelectedNode = current;
+            tree.SelectedNode = current;
             current.EnsureVisible();
         }
+    }
+
+    /// <summary>
+    /// Expands lazy nodes along a JSON path and returns the matching tree node.
+    /// </summary>
+    /// <param name="tree">The tree view to navigate.</param>
+    /// <param name="path">The JSON path segments to follow from the root node.</param>
+    /// <returns>The matching node, or null when the path cannot be resolved.</returns>
+    private TreeNode? NavigateTreeToPath(TreeView tree, List<string> path)
+    {
+        TreeNode? current = tree.Nodes.Count > 0 ? tree.Nodes[0] : null; // Root node
+
+        tree.BeginUpdate();
+        try
+        {
+            for (int p = 0; p < path.Count && current != null; p++)
+            {
+                // Ensure lazy children are expanded
+                if (current.Nodes.Count == 1 && current.Nodes[0].Tag is LazyTag)
+                {
+                    var tag = current.Tag as NodeTag;
+                    current.Nodes.Clear();
+                    if (tag?.Value is JsonObject obj)
+                        PopulateObjectNode(current, obj, maxDepth: 2, currentDepth: 0);
+                    else if (tag?.Value is JsonArray arr)
+                        PopulateArrayNode(current, arr, maxDepth: 2, currentDepth: 0);
+                }
+
+                current.Expand();
+                string segment = path[p];
+
+                // Find matching child node
+                TreeNode? found = null;
+                foreach (TreeNode child in current.Nodes)
+                {
+                    if (child.Tag is NodeTag childTag && childTag.Key == segment)
+                    {
+                        found = child;
+                        break;
+                    }
+                }
+                current = found;
+            }
+        }
+        finally
+        {
+            tree.EndUpdate();
+        }
+
+        return current;
     }
 
     /// <summary>
@@ -1636,7 +2274,7 @@ public partial class RawJsonPanel : UserControl
     /// <summary>
     /// Resolves virtual path segments against the JSON object's registered transforms,
     /// producing a path that matches the raw tree structure.
-    /// Example: ["PlayerStateData", "Inventory"] → ["BaseContext", "PlayerStateData", "Inventory"]
+    /// Example: ["PlayerStateData", "Inventory"] -> ["BaseContext", "PlayerStateData", "Inventory"]
     /// </summary>
     private static string[] ResolveTransformedPath(string[] pathSegments, JsonObject data)
     {
@@ -1688,13 +2326,18 @@ public partial class RawJsonPanel : UserControl
     }
 
     /// <summary>
-    /// Clears the highlighted search result nodes.
+    /// Clears the highlighted search result nodes and any active text match.
     /// </summary>
     private void ClearHighlights()
     {
         foreach (var node in _searchResults)
             node.BackColor = Color.Empty;
         _searchResults.Clear();
+
+        _textMatches.Clear();
+        _textMatchIndex = 0;
+        if (_viewMode == ViewMode.Text)
+            _syntaxTextBox.ClearSearchSelection();
     }
 
     /// <summary>
@@ -1715,12 +2358,7 @@ public partial class RawJsonPanel : UserControl
             BeginEditSelectedNode();
             e.Handled = true;
         }
-        else if (e.KeyCode == Keys.F3 && e.Shift)
-        {
-            FindPrevious();
-            e.Handled = true;
-        }
-        else if (e.KeyCode == Keys.F3 || (e.KeyCode == Keys.Enter && _searchPaths.Count > 0))
+        else if (e.KeyCode == Keys.Enter && _searchPaths.Count > 0)
         {
             FindNext();
             e.Handled = true;
@@ -1730,15 +2368,9 @@ public partial class RawJsonPanel : UserControl
             CopyValue();
             e.Handled = true;
         }
-        else if (e.Control && e.KeyCode == Keys.F)
-        {
-            _searchBox.Focus();
-            e.Handled = true;
-        }
         else if (e.KeyCode == Keys.Escape)
         {
-            _searchBox.Text = "";
-            ClearHighlights();
+            ClearSearch();
             e.Handled = true;
         }
         else if (e.Control && e.KeyCode == Keys.Z)
@@ -1757,6 +2389,9 @@ public partial class RawJsonPanel : UserControl
 
     #region Breadcrumb
 
+    /// <summary>Tracks the caret line used for the last text breadcrumb rebuild.</summary>
+    private int _lastTextBreadcrumbLine = -1;
+
     /// <summary>
     /// Cancels inline edit and updates breadcrumb navigation on tree selection.
     /// </summary>
@@ -1765,17 +2400,19 @@ public partial class RawJsonPanel : UserControl
     private void OnTreeNodeSelected(object? sender, TreeViewEventArgs e)
     {
         CancelInlineEdit();
-        UpdateBreadcrumb(e.Node);
+        UpdateBreadcrumb(_treeView, e.Node);
     }
 
     /// <summary>
-    /// Rebuilds breadcrumb controls for the selected tree node path.
+    /// Rebuilds breadcrumb controls for the selected node path in the given tree.
     /// </summary>
+    /// <param name="tree">The tree view the nodes belong to.</param>
     /// <param name="node">The currently selected tree node.</param>
-    private void UpdateBreadcrumb(TreeNode? node)
+    private void UpdateBreadcrumb(TreeView tree, TreeNode? node)
     {
         _breadcrumbPanel.SuspendLayout();
         _breadcrumbPanel.Controls.Clear();
+        _lastTextBreadcrumbLine = -1;
 
         if (node == null) { _breadcrumbPanel.ResumeLayout(); return; }
 
@@ -1792,21 +2429,81 @@ public partial class RawJsonPanel : UserControl
         for (int i = 0; i < parts.Count; i++)
         {
             if (i > 0)
-            {
-                var sep = new Label { Text = " > ", AutoSize = true, ForeColor = StatusColor(ThemeManager.Effective, Color.Gray, ThemeColors.Dark.SecondaryText),
-                    Margin = new Padding(0, 4, 0, 0) };
-                _breadcrumbPanel.Controls.Add(sep);
-            }
+                AddBreadcrumbSeparator();
             var targetNode = parts[i].Node;
             var link = new LinkLabel { Text = parts[i].Text, AutoSize = true,
                 Margin = new Padding(0, 3, 0, 0) };
             link.LinkClicked += (_, _) => {
-                _treeView.SelectedNode = targetNode;
+                tree.SelectedNode = targetNode;
                 targetNode.EnsureVisible();
             };
             _breadcrumbPanel.Controls.Add(link);
         }
         _breadcrumbPanel.ResumeLayout();
+    }
+
+    /// <summary>
+    /// Rebuilds the breadcrumb from the JSON context surrounding the text caret.
+    /// </summary>
+    private void UpdateTextBreadcrumb()
+    {
+        if (_viewMode != ViewMode.Text) return;
+
+        int caretLine = _syntaxTextBox.CaretLine;
+        if (caretLine == _lastTextBreadcrumbLine) return;
+        _lastTextBreadcrumbLine = caretLine;
+
+        var segments = RawJsonLogic.FindJsonContextSegments(
+            _syntaxTextBox.Lines, caretLine, _syntaxTextBox.ContextOwnerLines);
+        BuildTextBreadcrumb(segments);
+    }
+
+    /// <summary>
+    /// Builds breadcrumb links from a JSON key path. Each link scrolls the text
+    /// view to the line where its key appears.
+    /// </summary>
+    /// <param name="segments">The ordered key path with source line indices.</param>
+    private void BuildTextBreadcrumb(List<(string Key, int LineIndex)> segments)
+    {
+        _breadcrumbPanel.SuspendLayout();
+        _breadcrumbPanel.Controls.Clear();
+
+        var rootLink = new LinkLabel { Text = "Root", AutoSize = true, Margin = new Padding(0, 3, 0, 0) };
+        rootLink.LinkClicked += (_, _) => _syntaxTextBox.ScrollToLine(1);
+        _breadcrumbPanel.Controls.Add(rootLink);
+
+        for (int i = 0; i < segments.Count; i++)
+        {
+            AddBreadcrumbSeparator();
+            var targetLine = segments[i].LineIndex;
+            var link = new LinkLabel { Text = segments[i].Key, AutoSize = true,
+                Margin = new Padding(0, 3, 0, 0) };
+            link.LinkClicked += (_, _) => _syntaxTextBox.ScrollToLine(targetLine + 1);
+            _breadcrumbPanel.Controls.Add(link);
+        }
+        _breadcrumbPanel.ResumeLayout();
+    }
+
+    /// <summary>Clears all breadcrumb entries.</summary>
+    private void ClearBreadcrumb()
+    {
+        _breadcrumbPanel.SuspendLayout();
+        _breadcrumbPanel.Controls.Clear();
+        _breadcrumbPanel.ResumeLayout();
+        _lastTextBreadcrumbLine = -1;
+    }
+
+    /// <summary>Adds a separator label between breadcrumb links.</summary>
+    private void AddBreadcrumbSeparator()
+    {
+        var sep = new Label
+        {
+            Text = " > ",
+            AutoSize = true,
+            ForeColor = StatusColor(ThemeManager.Effective, Color.Gray, ThemeColors.Dark.SecondaryText),
+            Margin = new Padding(0, 4, 0, 0)
+        };
+        _breadcrumbPanel.Controls.Add(sep);
     }
 
     #endregion
@@ -1860,6 +2557,7 @@ public partial class RawJsonPanel : UserControl
                     _saveData = parsed;
 
                 InvalidateDisplayCache();
+                ResetIsolationState();
                 if (_viewMode == ViewMode.Tree)
                     BuildTree(parsed);
                 else if (_viewMode == ViewMode.Text)
@@ -1871,6 +2569,8 @@ public partial class RawJsonPanel : UserControl
                 InvalidateDiffCache();
                 _statusLabel.Text = UiStrings.Format("raw_json.imported", Path.GetFileName(dialog.FileName));
                 _statusLabel.ForeColor = StatusColor(ThemeManager.Effective, Color.Green, ThemeColors.Dark.SuccessGreen);
+                ResetSearchState();
+                UpdateTextBreadcrumb();
             }
             catch (Exception ex)
             {
@@ -2359,6 +3059,21 @@ public partial class RawJsonPanel : UserControl
     #region Text View Handlers
 
     /// <summary>
+    /// Handles text modifications in the text view, invalidating any search
+    /// matches and refreshing the breadcrumb.
+    /// </summary>
+    private void OnTextModified()
+    {
+        _textModifiedSinceSwitch = true;
+        InvalidateDiffCache();
+        _textMatches.Clear();
+        _textMatchIndex = 0;
+        _lastTextBreadcrumbLine = -1;
+        RaiseDataModified();
+        UpdateTextBreadcrumb();
+    }
+
+    /// <summary>
     /// Formats the JSON text in the editor and updates the status message.
     /// </summary>
     /// <param name="sender">The event source.</param>
@@ -2543,6 +3258,7 @@ public partial class RawJsonPanel : UserControl
         _treeViewButton.Text = UiStrings.Get("raw_json.tree_view");
         _textViewButton.Text = UiStrings.Get("raw_json.text_view");
         _splitViewButton.Text = UiStrings.Get("raw_json.split_view");
+        _isolateNodeCheck.Text = UiStrings.Get("raw_json.isolate_node");
         _formatButton.Text = UiStrings.Get("raw_json.format");
         _validateButton.Text = UiStrings.Get("raw_json.validate");
         _expandAllButton.Text = UiStrings.Get("raw_json.expand_all");
