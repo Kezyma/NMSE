@@ -19,7 +19,7 @@ public class SaveFileManager
     /// Used instead of UTF-8 when reading save files so that binary data embedded in JSON
     /// string values (e.g. TechBox item IDs) is preserved as individual characters rather
     /// than being corrupted by invalid-UTF-8 replacement.  The JSON parser then detects
-    /// characters ≥ 0x80 inside string tokens and produces BinaryData objects.
+    /// characters >= 0x80 inside string tokens and produces BinaryData objects.
     /// </summary>
     private static readonly Encoding Latin1 = Encoding.GetEncoding(28591);
     /// <summary>
@@ -689,12 +689,15 @@ using var outFs = new FileStream(filePath, FileMode.Create, FileAccess.Write, Fi
     /// <summary>
     /// Save JSON data back to an Xbox Game Pass save slot.
     /// Writes the compressed save data and meta to the blob directory,
-    /// then updates the containers.index file.
+    /// then updates the containers.index file.  The blob files are written under
+    /// new GUID names, so callers should refresh any cached paths from the returned
+    /// slot information.
     /// </summary>
     /// <param name="containersIndexPath">Path to the containers.index file.</param>
     /// <param name="slotIdentifier">Slot identifier (e.g., "Slot1Auto").</param>
     /// <param name="data">The JSON save data to write.</param>
-    public static void SaveXboxSave(string containersIndexPath, string slotIdentifier, JsonObject data)
+    /// <returns>The updated slot information with the new data and meta blob paths.</returns>
+    public static XboxSlotInfo SaveXboxSave(string containersIndexPath, string slotIdentifier, JsonObject data)
     {
         // Parse the full containers.index to get header info and all slots
         var indexData = ContainersIndexManager.ParseContainersIndexFull(containersIndexPath);
@@ -733,6 +736,8 @@ using var outFs = new FileStream(filePath, FileMode.Create, FileAccess.Write, Fi
             indexData.ProcessIdentifier,
             indexData.AccountGuid,
             DateTimeOffset.UtcNow);
+
+        return slotInfo;
     }
 
     /// <summary>

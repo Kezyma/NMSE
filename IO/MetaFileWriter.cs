@@ -292,6 +292,16 @@ public static class MetaFileWriter
             // Also preserve the slot identifier from the existing meta if present
             // (offset 348 = uint index 87+88 as a ulong)
         }
+        else
+        {
+            // New slot: there is no meta to preserve from, and the JSON Version field
+            // is the save-format version, not the game build number.  Inherit the
+            // game build version from a sibling save meta so the game does not flag
+            // the new slot as cross-save incompatible.
+            int siblingVersion = TryReadSiblingBaseVersion(saveFilePath);
+            if (siblingVersion > 0)
+                metaBaseVersion = siblingVersion;
+        }
 
         uint metaFormat = GetMetaFormat(metaBaseVersion);
         int bufferLen = GetSteamMetaLength(metaFormat);
@@ -650,6 +660,35 @@ public static class MetaFileWriter
         // Try both iteration counts
         int iterations = raw.Length == STEAM_META_LENGTH_VANILLA ? 8 : 6;
         return MetaCrypto.Decrypt(encrypted, storageSlot, iterations);
+    }
+
+    /// <summary>
+    /// Reads the game build (base) version from any sibling save meta file in the same
+    /// directory.  Used when writing a save into a new slot where no meta exists yet.
+    /// </summary>
+    private static int TryReadSiblingBaseVersion(string saveFilePath)
+    {
+        try
+        {
+            string? directory = Path.GetDirectoryName(saveFilePath);
+            if (directory == null) return 0;
+
+            foreach (string dataFile in Directory.GetFiles(directory, "save*.hg"))
+            {
+                if (string.Equals(dataFile, saveFilePath, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                int slot = SaveSlotManager.StorageSlotFromFileName(dataFile);
+                uint[]? meta = ReadSteamMeta(dataFile, slot);
+                if (meta != null && meta[0] == META_HEADER && meta.Length >= 18)
+                {
+                    int version = (int)meta[17];
+                    if (version > 0) return version;
+                }
+            }
+        }
+        catch { }
+        return 0;
     }
 
     /// <summary>

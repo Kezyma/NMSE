@@ -50,12 +50,12 @@ public class TransferOptions
 /// Each NMS save "slot" (as shown in the game's UI) contains TWO files: an auto save
 /// and a manual save.  The slot index is 0-based (slot 0 = game "Slot 1").
 ///
-/// Steam/GOG file layout (15 slots × 2 files each = 30 files):
+/// Steam/GOG file layout (15 slots x 2 files each = 30 files):
 ///   Slot 0: save.hg   (auto)  + save2.hg   (manual)
 ///   Slot 1: save3.hg  (auto)  + save4.hg   (manual)
 ///   Slot N: save(2N+1).hg     + save(2N+2).hg   (with special case: slot 0 auto = save.hg)
 ///
-/// Switch / PS4 streaming file layout (15 slots × 2 files each = 30 files):
+/// Switch / PS4 streaming file layout (15 slots x 2 files each = 30 files):
 ///   Slot 0: savedata02.hg (auto) + savedata03.hg (manual)
 ///   Slot 1: savedata04.hg (auto) + savedata05.hg (manual)
 ///   Slot N: savedata(2N+2).hg    + savedata(2N+3).hg
@@ -446,7 +446,7 @@ public static class SaveSlotManager
 
         if (decrypted[0] != MetaFileWriter.META_HEADER)
         {
-            // Decryption failed – copy verbatim as a best-effort fallback
+            // Decryption failed - copy verbatim as a best-effort fallback
             File.Copy(srcMetaFile, dstMetaFile, true);
             return;
         }
@@ -686,7 +686,7 @@ public static class SaveSlotManager
     /// <list type="bullet">
     ///   <item><c>accountdata.hg</c> -> storage slot 0</item>
     ///   <item><c>save.hg</c> -> storage slot 2 (first manual save)</item>
-    ///   <item><c>saveN.hg</c> (N ≥ 2) -> storage slot N + 1</item>
+    ///   <item><c>saveN.hg</c> (N >= 2) -> storage slot N + 1</item>
     /// </list>
     /// The meta encryption key depends on the storage slot, so using the
     /// wrong slot produces a garbled meta file that the game cannot read.
