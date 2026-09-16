@@ -1078,6 +1078,98 @@ public class PlatformIOTests
     }
 
     [Fact]
+    public void SaveXboxSave_ReturnsUpdatedSlotInfo_WithNewBlobPaths()
+    {
+        // Verify that SaveXboxSave returns slot info pointing at the newly written
+        // GUID-named blobs.  The UI caches the blob path for the file combo timestamp,
+        // so a stale path would read a deleted file and show the 1601 epoch.
+        string tmpDir = Path.Combine(Path.GetTempPath(), $"nmse_test_xbox_save_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tmpDir);
+        try
+        {
+            Guid blobGuid = Guid.NewGuid();
+            string blobDir = Path.Combine(tmpDir, blobGuid.ToString("N").ToUpperInvariant());
+            Directory.CreateDirectory(blobDir);
+
+            // Old data/meta blobs
+            Guid oldDataGuid = Guid.NewGuid();
+            Guid oldMetaGuid = Guid.NewGuid();
+            string oldDataPath = Path.Combine(blobDir, oldDataGuid.ToString("N").ToUpperInvariant());
+            string oldMetaPath = Path.Combine(blobDir, oldMetaGuid.ToString("N").ToUpperInvariant());
+            File.WriteAllBytes(oldDataPath, new byte[] { 0x01 });
+            File.WriteAllBytes(oldMetaPath, new byte[] { 0x02 });
+
+            // 328-byte container.1 pointing at the old blobs
+            byte[] containerBytes = new byte[328];
+            using (var ms = new MemoryStream(containerBytes))
+            using (var w = new BinaryWriter(ms))
+            {
+                w.Write(4);
+                w.Write(2);
+                w.Write(Encoding.Unicode.GetBytes("data"));
+                ms.Position = 8 + 128;
+                w.Write(new byte[16]);
+                w.Write(oldDataGuid.ToByteArray());
+                w.Write(Encoding.Unicode.GetBytes("meta"));
+                ms.Position = 8 + 160 + 128;
+                w.Write(new byte[16]);
+                w.Write(oldMetaGuid.ToByteArray());
+            }
+            File.WriteAllBytes(Path.Combine(blobDir, "container.1"), containerBytes);
+
+            // Minimal containers.index with a single Slot1Auto entry.
+            // The header strings are non-empty so the rewritten file exceeds the
+            // parser's 200-byte minimum (as real containers.index files do).
+            using var indexMs = new MemoryStream();
+            using var indexW = new BinaryWriter(indexMs);
+            indexW.Write(14);
+            indexW.Write(1L);
+            string processId = "HelloGames.NoMansSky_test";
+            indexW.Write(processId.Length);
+            indexW.Write(Encoding.Unicode.GetBytes(processId));
+            indexW.Write(0L);         // lastModifiedTime
+            indexW.Write(0);          // syncState
+            string accountGuid = "000900000150C65A29070100B936489A";
+            indexW.Write(accountGuid.Length);
+            indexW.Write(Encoding.Unicode.GetBytes(accountGuid));
+            indexW.Write(268435456L); // footer
+            string id = "Slot1Auto";
+            indexW.Write(id.Length);
+            indexW.Write(Encoding.Unicode.GetBytes(id));
+            indexW.Write(0);       // identifier2
+            indexW.Write(0);       // syncTime
+            indexW.Write((byte)1); // blob extension
+            indexW.Write(0);       // sync state
+            indexW.Write(blobGuid.ToByteArray());
+            indexW.Write(0L);      // last modified
+            indexW.Write(0L);      // empty
+            indexW.Write(0L);      // total size
+            while (indexMs.Position < 200) indexW.Write((byte)0);
+
+            string indexPath = Path.Combine(tmpDir, "containers.index");
+            File.WriteAllBytes(indexPath, indexMs.ToArray());
+
+            var before = ContainersIndexManager.ParseContainersIndex(indexPath);
+            Assert.Equal(oldDataPath, before["Slot1Auto"].DataFilePath);
+
+            var data = JsonObject.Parse("{\"CommonStateData\":{\"SaveName\":\"Test\"}}");
+            var updated = SaveFileManager.SaveXboxSave(indexPath, "Slot1Auto", data);
+
+            // New blob file must exist, differ from the old path, and the old file must be gone
+            Assert.NotNull(updated.DataFilePath);
+            Assert.True(File.Exists(updated.DataFilePath), "Updated data blob should exist");
+            Assert.NotEqual(oldDataPath, updated.DataFilePath);
+            Assert.False(File.Exists(oldDataPath), "Old data blob should have been removed");
+
+            // A re-parse (what re-selecting the directory does) must resolve the same path
+            var after = ContainersIndexManager.ParseContainersIndex(indexPath);
+            Assert.Equal(updated.DataFilePath, after["Slot1Auto"].DataFilePath);
+            Assert.Equal(updated.MetaFilePath, after["Slot1Auto"].MetaFilePath);
+        }
+        finally { Directory.Delete(tmpDir, true); }
+    }
+
+    [Fact]
     public void ContainersIndexManager_WriteContainersIndex_RoundTrip_PreservesData()
     {
         // Verify that parsing containers.index and writing it back produces a file
@@ -2089,5 +2181,66 @@ public class PlatformIOTests
         {
             Directory.Delete(tmpDir, true);
         }
+    }
+
+    [Fact]
+    public void SaveToFile_NewSlotMeta_InheritsGameBuildVersionFromSibling()
+    {
+        // Regression: writing a save into a brand-new slot used to put the save-format
+        // Version (JSON field) into the meta base version.  The game compares that field
+        // to the game build version and refuses the slot with a
+        // "Cross-Save Version Incompatible" error.  When no meta exists for the new
+        // slot, the meta writer must inherit the game build version from a sibling meta.
+        string? repoRoot = FindReferenceRoot();
+        if (repoRoot == null) return;
+
+        string sourceDir = Path.Combine(repoRoot, "_ref", "save_names");
+        string sourceSave = Path.Combine(sourceDir, "save2.hg");
+        string sourceMeta = Path.Combine(sourceDir, "mf_save2.hg");
+        if (!File.Exists(sourceSave) || !File.Exists(sourceMeta)) return;
+
+        var siblingMeta = MetaFileWriter.ReadSteamMeta(sourceSave, 3);
+        if (siblingMeta == null || siblingMeta[0] != MetaFileWriter.META_HEADER || siblingMeta.Length < 18)
+            return;
+        int expectedBaseVersion = (int)siblingMeta[17];
+        Assert.True(expectedBaseVersion > 0);
+
+        string tmpDir = Path.Combine(Path.GetTempPath(), $"nmse_test_newslot_meta_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tmpDir);
+        try
+        {
+            File.Copy(sourceSave, Path.Combine(tmpDir, "save2.hg"));
+            File.Copy(sourceMeta, Path.Combine(tmpDir, "mf_save2.hg"));
+
+            var save = SaveFileManager.LoadSaveFile(Path.Combine(tmpDir, "save2.hg"));
+            Assert.NotNull(save);
+
+            string newSlotPath = Path.Combine(tmpDir, "save11.hg");
+            SaveFileManager.SaveToFile(newSlotPath, save!, compress: true, writeMeta: true,
+                platform: SaveFileManager.Platform.Steam, slotIndex: 11);
+
+            var newMeta = MetaFileWriter.ReadSteamMeta(newSlotPath, 12);
+            Assert.NotNull(newMeta);
+            Assert.Equal(MetaFileWriter.META_HEADER, newMeta![0]);
+            Assert.Equal(expectedBaseVersion, (int)newMeta[17]);
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, true);
+        }
+    }
+
+    /// <summary>Walks up from the test binary to the repository root (the folder containing _ref).</summary>
+    private static string? FindReferenceRoot()
+    {
+        var dir = AppContext.BaseDirectory;
+        for (int i = 0; i < 10; i++)
+        {
+            if (Directory.Exists(Path.Combine(dir, "_ref"))) return dir;
+            var parent = Directory.GetParent(dir);
+            if (parent == null) break;
+            dir = parent.FullName;
+        }
+        return null;
     }
 }
