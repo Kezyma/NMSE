@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using NMSE.Config;
 using NMSE.Core;
+using NMSE.Data;
 using NMSE.UI;
 
 namespace NMSE;
@@ -14,6 +16,10 @@ static class Program
     {
         // Remove the stale .old executable left by a previous self-update.
         UpdateService.CleanupOldExeIfPresent();
+
+        // Initialise the UI string tables early so crash dialogs are localised
+        // even when a failure happens before the main form finishes loading.
+        InitializeUiStrings();
 
         // Wire up global exception handlers for crash logging
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
@@ -53,10 +59,30 @@ static class Program
     {
         LogCrash(e.Exception);
         MessageBox.Show(
-            $"An unexpected error occurred:\n\n{e.Exception.Message}\n\nDetails have been written to crash.log in the application directory.",
-            "NMSE – Unexpected Error",
+            UiStrings.Format("dialog.crash_message", e.Exception.Message),
+            UiStrings.Get("dialog.crash_title"),
             MessageBoxButtons.OK,
             MessageBoxIcon.Error);
+    }
+
+    /// <summary>
+    /// Loads the UI string tables using the language saved in the configuration,
+    /// so early startup failures (including the crash dialog) are localised.
+    /// </summary>
+    private static void InitializeUiStrings()
+    {
+        try
+        {
+            string uiLangDir = Path.Combine(AppContext.BaseDirectory, "Resources", "ui", "lang");
+            UiStrings.SetDirectory(uiLangDir);
+            var config = AppConfig.Instance;
+            config.Initialize();
+            UiStrings.Load(config.Language);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"UI string initialisation failed: {ex.Message}");
+        }
     }
 
     private static void OnUnhandledException(object sender, UnhandledExceptionEventArgs e)

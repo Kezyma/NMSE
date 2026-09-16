@@ -76,6 +76,7 @@ public partial class MainFormResources : Form
     private readonly RecipePanel _recipePanel;
     private readonly ExportConfigPanel _exportConfigPanel;
     private readonly RawJsonPanel _rawJsonPanel;
+    private readonly DatabaseSearchPanel _databaseSearchPanel;
 
     // Data
     private readonly GameItemDatabase _database = new();
@@ -170,28 +171,29 @@ public partial class MainFormResources : Form
         _recipePanel = new RecipePanel();
         _exportConfigPanel = new ExportConfigPanel();
         _rawJsonPanel = new RawJsonPanel();
+        _databaseSearchPanel = new DatabaseSearchPanel();
 
         // Embed Recipes as a sub-tab inside Discoveries
         _cataloguePanel.AddRecipeTab(_recipePanel);
 
         // Track unsaved changes from inventory grids
-        _exosuitPanel.DataModified += (s, e) => _hasUnsavedChanges = true;
+        _exosuitPanel.DataModified += OnPanelDataModified;
         _exosuitPanel.CrossInventoryTransferCompleted += OnExosuitCrossInventoryTransferCompleted;
-        _multitoolPanel.DataModified += (s, e) => _hasUnsavedChanges = true;
-        _shipPanel.DataModified += (s, e) => _hasUnsavedChanges = true;
+        _multitoolPanel.DataModified += OnPanelDataModified;
+        _shipPanel.DataModified += OnPanelDataModified;
         _shipPanel.CrossInventoryTransferCompleted += OnStarshipCrossInventoryTransferCompleted;
-        _fleetPanel.DataModified += (s, e) => _hasUnsavedChanges = true;
-        _vehiclePanel.DataModified += (s, e) => _hasUnsavedChanges = true;
-        _cataloguePanel.DataModified += (s, e) => _hasUnsavedChanges = true;
-        _accountPanel.DataModified += (s, e) => _hasUnsavedChanges = true;
-        _basePanel.DataModified += (s, e) => _hasUnsavedChanges = true;
-        _mainStatsPanel.DataModified += (s, e) => _hasUnsavedChanges = true;
-        _milestonePanel.DataModified += (s, e) => _hasUnsavedChanges = true;
-        _settlementPanel.DataModified += (s, e) => _hasUnsavedChanges = true;
-        _companionPanel.DataModified += (s, e) => _hasUnsavedChanges = true;
+        _fleetPanel.DataModified += OnPanelDataModified;
+        _vehiclePanel.DataModified += OnPanelDataModified;
+        _cataloguePanel.DataModified += OnPanelDataModified;
+        _accountPanel.DataModified += OnPanelDataModified;
+        _basePanel.DataModified += OnPanelDataModified;
+        _mainStatsPanel.DataModified += OnPanelDataModified;
+        _milestonePanel.DataModified += OnPanelDataModified;
+        _settlementPanel.DataModified += OnPanelDataModified;
+        _companionPanel.DataModified += OnPanelDataModified;
         _companionPanel.ExosuitCargoModified += OnCompanionExosuitCargoModified;
-        _byteBeatPanel.DataModified += (s, e) => _hasUnsavedChanges = true;
-        _rawJsonPanel.DataModified += (s, e) => _hasUnsavedChanges = true;
+        _byteBeatPanel.DataModified += OnPanelDataModified;
+        _rawJsonPanel.DataModified += OnPanelDataModified;
 
         // Wire up GOTO JSON navigation from sub-panels
         _fleetPanel.GoToJsonRequested += OnGoToJsonRequested;
@@ -242,6 +244,7 @@ public partial class MainFormResources : Form
     internal void PerformStartup()
     {
         LoadConfig();
+        ApplySavedTheme();
         LoadDatabase();
 
         _splashForm?.SetProgress(93, "Applying language...");
@@ -503,6 +506,7 @@ public partial class MainFormResources : Form
         _tabControl.TabPages.Add(CreateTab("Account Rewards", _accountPanel));      // 12
         _tabControl.TabPages.Add(CreateTab("Export Settings", _exportConfigPanel)); // 13
         _tabControl.TabPages.Add(CreateTab("Raw JSON Editor", _rawJsonPanel));      // 14
+        _tabControl.TabPages.Add(CreateTab("Database Search", _databaseSearchPanel)); // 15
 
         // When the user switches to the Raw JSON tab, sync all panel data to
         // the in-memory JsonObject first so the editor reflects current edits.
@@ -511,16 +515,17 @@ public partial class MainFormResources : Form
 
     /// <summary>
     /// Installs the no-save overlay and lock on every editor tab. The Export
-    /// Settings tab (index 13) is exempt because it edits app settings and
-    /// never requires a loaded save.
+    /// Settings tab (index 13) and the Database Search tab (index 15) are exempt
+    /// because they never require a loaded save.
     /// </summary>
     private void InstallEditorLock()
     {
         const int exportSettingsTabIdx = 13;
+        const int databaseSearchTabIdx = 15;
 
         for (int i = 0; i < _tabControl.TabPages.Count; i++)
         {
-            if (i == exportSettingsTabIdx) continue;
+            if (i == exportSettingsTabIdx || i == databaseSearchTabIdx) continue;
 
             var page = _tabControl.TabPages[i];
             var content = GetTabContent(page);
@@ -642,7 +647,7 @@ public partial class MainFormResources : Form
         }
 
         // Sync data to in-memory JSON and refresh tree when switching to Raw JSON tab
-        // (but not during GoToJson navigation — the handler does this itself)
+        // (but not during GoToJson navigation - the handler does this itself)
         if (!_isGoToJsonNavigation
             && _tabControl.SelectedTab?.Controls.Count > 0
             && _tabControl.SelectedTab.Controls[0] == _rawJsonPanel)
@@ -778,6 +783,7 @@ public partial class MainFormResources : Form
                 _basePanel.LoadData(_currentSaveData);
                 break;
             case 8: // Discoveries (includes Recipes sub-tab)
+                _cataloguePanel.SetAccountData(_accountPanel.AccountData);
                 _cataloguePanel.LoadData(_currentSaveData);
                 break;
             case 9: // Milestones
@@ -966,6 +972,7 @@ public partial class MainFormResources : Form
             PetBiomeAffinityMap.LoadFromFile(Path.Combine(jsonPath, "Game Table Globals.json"));
             CompanionDatabase.LoadFromFile(Path.Combine(jsonPath, "Creature Species.json"));
             CreaturePartDatabase.LoadFromFile(Path.Combine(jsonPath, "Creature Descriptors.json"));
+            SpacePoiTableDatabase.LoadFromFile(Path.Combine(jsonPath, "Space POI.json"));
 
             // Refresh companion panel species list now that the database has been loaded
             // (the panel constructor runs before data loading, so the combo is initially empty)
@@ -1012,9 +1019,12 @@ public partial class MainFormResources : Form
             _multitoolPanel.SetDatabase(_database);
             _vehiclePanel.SetDatabase(_database);
             _cataloguePanel.SetDatabase(_database);
+            _cataloguePanel.SetCatalogueDatabase(new CatalogueDatabase(
+                Path.Combine(basePath, "Resources", "json")));
             _settlementPanel.SetDatabase(_database);
             _fleetPanel.SetDatabase(_database);
             _basePanel.SetDatabase(_database);
+            _databaseSearchPanel.SetDatabase(_database);
 
             _exosuitPanel.SetIconManager(_iconManager);
             _shipPanel.SetIconManager(_iconManager);
@@ -1025,6 +1035,7 @@ public partial class MainFormResources : Form
             _settlementPanel.SetIconManager(_iconManager);
             _basePanel.SetIconManager(_iconManager);
             _fleetPanel.SetIconManager(_iconManager);
+            _databaseSearchPanel.SetIconManager(_iconManager);
 
             _accountPanel.SetDatabase(_database);
             _accountPanel.SetIconManager(_iconManager);
@@ -1190,6 +1201,7 @@ public partial class MainFormResources : Form
                     if (xboxSlots.TryGetValue(ContainersIndexManager.AccountDataIdentifier, out var accountSlot))
                     {
                         _accountPanel.LoadXboxAccountData(accountSlot);
+                        _rawJsonPanel.CaptureAccountBaseline(_accountPanel.AccountData);
                     }
                 }
                 catch (Exception ex)
@@ -1333,6 +1345,7 @@ public partial class MainFormResources : Form
         // Load account data (accountdata.hg for Steam/GOG/PS4; Xbox handled above)
         if (_detectedPlatform != SaveFileManager.Platform.XboxGamePass)
             _accountPanel.LoadAccountFile(dir);
+        _rawJsonPanel.CaptureAccountBaseline(_accountPanel.AccountData);
 
         if (_saveSlotCombo.Items.Count > 0)
         {
@@ -1416,16 +1429,20 @@ public partial class MainFormResources : Form
                 }
                 catch { }
 
-                // Append file timestamp
+                // Append file timestamp (missing blobs report the 1601 epoch, so
+                // only existing files contribute a timestamp or the newest pick).
                 string timestamp = "";
                 try
                 {
-                    var lastWrite = File.GetLastWriteTime(filePath);
-                    timestamp = $" - {lastWrite:dd/MM/yy h:mmtt}";
-                    if (lastWrite > newestTime)
+                    if (File.Exists(filePath))
                     {
-                        newestTime = lastWrite;
-                        newestIndex = i;
+                        var lastWrite = File.GetLastWriteTime(filePath);
+                        timestamp = $" - {lastWrite:dd/MM/yy h:mmtt}";
+                        if (lastWrite > newestTime)
+                        {
+                            newestTime = lastWrite;
+                            newestIndex = i;
+                        }
                     }
                 }
                 catch { }
@@ -1465,16 +1482,20 @@ public partial class MainFormResources : Form
                     suffix = isAuto ? " (Auto)" : " (Manual)";
                 }
 
-                // Append file timestamp
+                // Append file timestamp (missing blobs report the 1601 epoch, so
+                // only existing files contribute a timestamp or the newest pick).
                 string timestamp = "";
                 try
                 {
-                    var lastWrite = File.GetLastWriteTime(filePath);
-                    timestamp = $" - {lastWrite:dd/MM/yy h:mmtt}";
-                    if (lastWrite > newestTime)
+                    if (File.Exists(filePath))
                     {
-                        newestTime = lastWrite;
-                        newestIndex = i;
+                        var lastWrite = File.GetLastWriteTime(filePath);
+                        timestamp = $" - {lastWrite:dd/MM/yy h:mmtt}";
+                        if (lastWrite > newestTime)
+                        {
+                            newestTime = lastWrite;
+                            newestIndex = i;
+                        }
                     }
                 }
                 catch { }
@@ -1555,12 +1576,24 @@ public partial class MainFormResources : Form
             : existingLabel;
 
         // Re-detect difficulty and expedition from the current file (cheap fast scan).
-        string difficulty = _currentFilePath != null ? DetectDifficulty(_currentFilePath) : "";
+        // For Xbox the tracked path is containers.index, so scan the slot's data blob instead.
+        string? scanPath = _currentFilePath;
+        if (_xboxContainersIndexPath != null && _xboxFileIdentifiers != null)
+        {
+            int fileIdx = _saveFileCombo.SelectedIndex;
+            if (slotIdx < _saveSlotFiles.Count && fileIdx >= 0 && fileIdx < _saveSlotFiles[slotIdx].Count)
+            {
+                string xboxPath = _saveSlotFiles[slotIdx][fileIdx];
+                if (!string.IsNullOrEmpty(xboxPath)) scanPath = xboxPath;
+            }
+        }
+
+        string difficulty = scanPath != null ? DetectDifficulty(scanPath) : "";
 
         string? expeditionTag = null;
-        if (_currentFilePath != null)
+        if (scanPath != null)
         {
-            SaveFileManager.DetectActiveContextFast(_currentFilePath, out bool isExpedition);
+            SaveFileManager.DetectActiveContextFast(scanPath, out bool isExpedition);
             if (isExpedition) expeditionTag = UiStrings.Get("slot.expedition");
         }
 
@@ -1646,6 +1679,7 @@ public partial class MainFormResources : Form
             {
                 // Always load account data early (needed by MainStats and Raw JSON)
                 if (saveDir != null) _accountPanel.LoadAccountFile(saveDir);
+                _rawJsonPanel.CaptureAccountBaseline(_accountPanel.AccountData);
                 _rawJsonPanel.SetSaveFilePath(filePath);
                 _rawJsonPanel.SetAccountData(_accountPanel.AccountData, _accountPanel.AccountFilePath);
                 // Capture the diff baseline now, before any panel LoadData is called.
@@ -2036,6 +2070,7 @@ public partial class MainFormResources : Form
             {
                 string? saveDir = Path.GetDirectoryName(memoryDatPath);
                 if (saveDir != null) _accountPanel.LoadAccountFile(saveDir);
+                _rawJsonPanel.CaptureAccountBaseline(_accountPanel.AccountData);
                 _rawJsonPanel.SetSaveFilePath(memoryDatPath);
                 _rawJsonPanel.SetAccountData(_accountPanel.AccountData, _accountPanel.AccountFilePath);
                 // Capture the diff baseline before any panel LoadData is called (see LoadSaveData).
@@ -2149,7 +2184,23 @@ public partial class MainFormResources : Form
                     if (fileIdx < 0 || fileIdx >= identifiers.Count)
                         fileIdx = 0;
                     string slotId = identifiers[fileIdx];
-                    SaveFileManager.SaveXboxSave(_xboxContainersIndexPath, slotId, _currentSaveData);
+                    var savedSlot = SaveFileManager.SaveXboxSave(_xboxContainersIndexPath, slotId, _currentSaveData);
+
+                    // The write replaces the blob files with new GUID-named ones, so the
+                    // cached path must be refreshed or the file combo reads a deleted file
+                    // and shows the 1601 epoch timestamp until the directory is re-selected.
+                    if (savedSlot.DataFilePath != null
+                        && slotIdx < _saveSlotFiles.Count
+                        && fileIdx < _saveSlotFiles[slotIdx].Count)
+                    {
+                        _saveSlotFiles[slotIdx][fileIdx] = savedSlot.DataFilePath;
+                    }
+
+                    // Refresh the file combo labels (timestamps) but keep the saved file selected.
+                    int keepFileIdx = _saveFileCombo.SelectedIndex;
+                    PopulateSaveFileCombo();
+                    if (keepFileIdx >= 0 && keepFileIdx < _saveFileCombo.Items.Count)
+                        _saveFileCombo.SelectedIndex = keepFileIdx;
                 }
 
                 // Save account data (season rewards, etc.) to the AccountData blob.
@@ -2215,7 +2266,7 @@ public partial class MainFormResources : Form
                 compress: compress, writeMeta: true, platform: _detectedPlatform, slotIndex: metaSlotIdx);
 
             // Write account data file to disk (if loaded).
-            // accountdata.hg is always plain JSON with a null terminator — no LZ4 compression.
+            // accountdata.hg is always plain JSON with a null terminator - no LZ4 compression.
             // For PS4 HTOS saves the manifest (manifest00.hg) must also be rewritten whenever
             // the account file size changes (e.g. after unlocking rewards), otherwise the PS4
             // system reads the stale size from the manifest and may reject the save.
@@ -2522,6 +2573,7 @@ public partial class MainFormResources : Form
                 _squadronPanel.LoadData(_currentSaveData);
                 _basePanel.LoadData(_currentSaveData);
                 _cataloguePanel.LoadData(_currentSaveData);
+                _cataloguePanel.SetAccountData(_accountPanel.AccountData);
                 _milestonePanel.LoadData(_currentSaveData);
                 _settlementPanel.LoadData(_currentSaveData);
                 _byteBeatPanel.LoadData(_currentSaveData);
@@ -2681,6 +2733,7 @@ public partial class MainFormResources : Form
             SettlementDatabase.ApplyLocalisation(_localisationService);
             WikiGuideDatabase.ApplyLocalisation(_localisationService);
             CompanionAccessoryDatabase.ApplyLocalisation(_localisationService);
+            SpacePoiTableDatabase.ApplyLocalisation(_localisationService);
             _accountPanel.RefreshRewardNames();
             _frigatePanel.RefreshTraitCombos();
             _settlementPanel.RefreshPerkCombos();
@@ -2760,6 +2813,7 @@ public partial class MainFormResources : Form
                         FrigateTraitDatabase.RevertLocalisation();
                         SettlementDatabase.RevertLocalisation();
                         WikiGuideDatabase.RevertLocalisation();
+                        SpacePoiTableDatabase.RevertLocalisation();
                     }
                     else
                     {
@@ -2773,6 +2827,7 @@ public partial class MainFormResources : Form
                         SettlementDatabase.ApplyLocalisation(_localisationService);
                         WikiGuideDatabase.ApplyLocalisation(_localisationService);
                         CompanionAccessoryDatabase.ApplyLocalisation(_localisationService);
+                        SpacePoiTableDatabase.ApplyLocalisation(_localisationService);
                     }
                 });
             }
@@ -2830,11 +2885,30 @@ public partial class MainFormResources : Form
     private void SetTheme(AppTheme theme)
     {
         ThemeManager.SetTheme(theme);
+        // Persist the chosen theme so it is restored on the next launch.
+        AppConfig.Instance.Theme = theme.ToString();
+        AppConfig.Instance.Save();
         // SetTheme fires ThemeChanged which triggers ReapplyTheme, so we don't
         // need to call ThemeApplicator.ApplyToForm here directly. But re-applying
         // is idempotent and protects against the event not being subscribed yet.
         ThemeApplicator.ApplyToForm(this);
         UpdateThemeMenuChecks();
+    }
+
+    /// <summary>
+    /// Restores the theme saved in the configuration (if any) so the user's last
+    /// chosen theme is applied on startup. No-op when no theme has been saved.
+    /// </summary>
+    private void ApplySavedTheme()
+    {
+        string? saved = AppConfig.Instance.Theme;
+        if (string.IsNullOrEmpty(saved)) return;
+
+        if (Enum.TryParse<AppTheme>(saved, ignoreCase: true, out var theme)
+            && Enum.IsDefined(theme))
+        {
+            ThemeManager.SetTheme(theme);
+        }
     }
 
     /// <summary>
@@ -2948,11 +3022,13 @@ public partial class MainFormResources : Form
         }
 
         // ---- Toolbar labels ----
-        // Row 1: Directory: [0], combo [1], Browse [2]
-        if (_toolStrip.Items.Count >= 3)
+        // Row 1: Directory: [0], combo [1], Browse [2], separator [3], Backup: [4], combo [5], Browse [6]
+        if (_toolStrip.Items.Count >= 5)
         {
             _toolStrip.Items[0].Text = UiStrings.Get("toolbar.directory");
             _toolStrip.Items[2].Text = UiStrings.Get("toolbar.browse");
+            _toolStrip.Items[4].Text = UiStrings.Get("toolbar.backup");
+            _backupBrowseButton.Text = UiStrings.Get("toolbar.browse");
         }
         // Row 2: Save Slot: [0], combo [1], File: [2], combo [3], sep [4], Load [5], Save [6]
         if (_toolStrip2.Items.Count >= 7)
@@ -2969,7 +3045,8 @@ public partial class MainFormResources : Form
             "tab.player", "tab.exosuit", "tab.multitools", "tab.starships",
             "tab.fleet", "tab.exocraft", "tab.companions", "tab.bases_storage",
             "tab.discoveries", "tab.milestones", "tab.settlements", "tab.bytebeats",
-            "tab.account_rewards", "tab.export_settings", "tab.raw_json_editor"
+            "tab.account_rewards", "tab.export_settings", "tab.raw_json_editor",
+            "tab.database_search"
         };
         for (int i = 0; i < _tabControl.TabCount && i < tabKeys.Length; i++)
         {
@@ -2989,6 +3066,7 @@ public partial class MainFormResources : Form
         _accountPanel.ApplyUiLocalisation();
         _recipePanel.ApplyUiLocalisation();
         _rawJsonPanel.ApplyUiLocalisation();
+        _databaseSearchPanel.ApplyUiLocalisation();
         _exportConfigPanel.ApplyUiLocalisation();
         _exosuitPanel.ApplyUiLocalisation();
         _companionPanel.ApplyUiLocalisation();
@@ -3451,12 +3529,28 @@ public partial class MainFormResources : Form
             combo.ComboBox.SelectionLength = 0;
     }
 
+    /// <summary>
+    /// Marks the save as modified and invalidates the Raw JSON Editor's change cache so
+    /// the Show Changes view always reflects edits made from other panels.
+    /// </summary>
+    private void OnPanelDataModified(object? sender, EventArgs e)
+    {
+        _hasUnsavedChanges = true;
+        _rawJsonPanel.NotifyDataChanged();
+    }
+
     private void OnFormClosing(object? sender, FormClosingEventArgs e)
     {
         SaveContext.Reset();
 
-        // Prompt if there are unsaved changes
-        if (_hasUnsavedChanges && _currentSaveData != null)
+        // Prompt if there are unsaved changes. A change that has been reverted (for
+        // example ticking and unticking a catalogue row) must not prompt, so compare
+        // the live data with the baselines captured at load time.
+        bool changesExist = _hasUnsavedChanges
+            && _currentSaveData != null
+            && (!_rawJsonPanel.SaveDataMatchesBaseline(_currentSaveData)
+                || !_rawJsonPanel.AccountDataMatchesBaseline(_accountPanel.AccountData));
+        if (changesExist)
         {
             var result = MessageBox.Show(this,
                 UiStrings.Get("dialog.unsaved_changes_msg"),
