@@ -26,6 +26,12 @@ public partial class MultitoolPanel : UserControl
     /// <summary>Class index loaded from the save for the current tool, used to detect user changes.</summary>
     private int _originalClassIndex = -1;
 
+    /// <summary>Type index loaded from the save for the current tool, used to detect user changes.</summary>
+    private int _originalTypeIndex = -1;
+
+    /// <summary>Data index of the tool currently loaded into the details controls, or -1.</summary>
+    private int _loadedToolIndex = -1;
+
     public MultitoolPanel()
     {
         InitializeComponent();
@@ -110,6 +116,9 @@ public partial class MultitoolPanel : UserControl
             _playerState = saveData.GetObject("PlayerStateData");
             if (_playerState == null) return;
 
+            _loadedToolIndex = -1;
+            _originalTypeIndex = -1;
+
             _multitools = _playerState.GetArray("Multitools");
             _toolSelector.Items.Clear();
 
@@ -178,45 +187,10 @@ public partial class MultitoolPanel : UserControl
             var multitools = playerState.GetArray("Multitools");
             if (multitools != null && _toolSelector.SelectedIndex >= 0 && _toolSelector.Items.Count > 0)
             {
-                var item = (MultitoolLogic.ToolListItem)_toolSelector.Items[_toolSelector.SelectedIndex]!;
-                int idx = item.DataIndex;
-                if (idx >= multitools.Length) return;
-
                 // Save active multitool index (use tracked value, not current selection)
                 try { RawNumberGuard.SetInt(playerState, "ActiveMultioolIndex", _activeToolIndex); } catch { }
 
-                var tool = multitools.GetObject(idx);
-
-                var values = new MultitoolLogic.ToolSaveValues
-                {
-                    Name = _toolName.Text,
-                    ClassIndex = _toolClass.SelectedIndex,
-                    OriginalClassIndex = _originalClassIndex,
-                    TypeIndex = GetSelectedToolTypeIndex(),
-                    Seed = _toolSeed.Text,
-                    IsLargeIndex = _toolSize.SelectedIndex,
-                    // Use raw values for unmodified fields to prevent any
-                    // precision loss from the UI control text round-trip.
-                    Damage = _damageField.UserModified
-                        ? (_damageField.NumericValue ?? 0.0)
-                        : (_rawToolStatValues?.GetValueOrDefault("^WEAPON_DAMAGE") ?? _damageField.NumericValue ?? 0.0),
-                    Mining = _miningField.UserModified
-                        ? (_miningField.NumericValue ?? 0.0)
-                        : (_rawToolStatValues?.GetValueOrDefault("^WEAPON_MINING") ?? _miningField.NumericValue ?? 0.0),
-                    Scan = _scanField.UserModified
-                        ? (_scanField.NumericValue ?? 0.0)
-                        : (_rawToolStatValues?.GetValueOrDefault("^WEAPON_SCAN") ?? _scanField.NumericValue ?? 0.0),
-                    DamageText = _damageField.UserModified ? _damageField.DisplayText : null,
-                    MiningText = _miningField.UserModified ? _miningField.DisplayText : null,
-                    ScanText = _scanField.UserModified ? _scanField.DisplayText : null,
-                    RawStatValues = _rawToolStatValues
-                };
-
-                // Determine if this is the primary tool for syncing purposes
-                bool isPrimary = (idx == _activeToolIndex);
-
-                MultitoolLogic.SaveToolData(tool, playerState, values, isPrimary);
-                _storeGrid.SaveInventory(tool.GetObject("Store"));
+                CommitCurrentTool();
             }
             else
             {
@@ -228,12 +202,73 @@ public partial class MultitoolPanel : UserControl
         catch { }
     }
 
+    /// <summary>
+    /// Writes pending edits from the details controls into the currently loaded tool's
+    /// JSON.  Called when the tool selection changes and before operations that act on
+    /// the tool (archive/export/import) so edits are not lost when working across tools.
+    /// </summary>
+    private void CommitCurrentTool()
+    {
+        try
+        {
+            if (_playerState == null || _multitools == null) return;
+            if (_loadedToolIndex < 0 || _loadedToolIndex >= _multitools.Length) return;
+
+            var tool = _multitools.GetObject(_loadedToolIndex);
+            if (tool == null) return;
+
+            // Only write the type when the user changed it.  Writing the detected type
+            // back would overwrite models that are not present in the type list.
+            int selectedType = GetSelectedToolTypeIndex();
+            int typeToWrite = selectedType >= 0 && selectedType != _originalTypeIndex ? selectedType : -1;
+
+            var values = new MultitoolLogic.ToolSaveValues
+            {
+                Name = _toolName.Text,
+                ClassIndex = _toolClass.SelectedIndex,
+                OriginalClassIndex = _originalClassIndex,
+                TypeIndex = typeToWrite,
+                Seed = _toolSeed.Text,
+                IsLargeIndex = _toolSize.SelectedIndex,
+                // Use raw values for unmodified fields to prevent any
+                // precision loss from the UI control text round-trip.
+                Damage = _damageField.UserModified
+                    ? (_damageField.NumericValue ?? 0.0)
+                    : (_rawToolStatValues?.GetValueOrDefault("^WEAPON_DAMAGE") ?? _damageField.NumericValue ?? 0.0),
+                Mining = _miningField.UserModified
+                    ? (_miningField.NumericValue ?? 0.0)
+                    : (_rawToolStatValues?.GetValueOrDefault("^WEAPON_MINING") ?? _miningField.NumericValue ?? 0.0),
+                Scan = _scanField.UserModified
+                    ? (_scanField.NumericValue ?? 0.0)
+                    : (_rawToolStatValues?.GetValueOrDefault("^WEAPON_SCAN") ?? _scanField.NumericValue ?? 0.0),
+                DamageText = _damageField.UserModified ? _damageField.DisplayText : null,
+                MiningText = _miningField.UserModified ? _miningField.DisplayText : null,
+                ScanText = _scanField.UserModified ? _scanField.DisplayText : null,
+                RawStatValues = _rawToolStatValues
+            };
+
+            // Determine if this is the primary tool for syncing purposes
+            bool isPrimary = (_loadedToolIndex == _activeToolIndex);
+
+            MultitoolLogic.SaveToolData(tool, _playerState, values, isPrimary);
+            _storeGrid.SaveInventory(tool.GetObject("Store"));
+
+            // Keep the originals in sync so repeated commits do not rewrite unchanged values.
+            if (selectedType >= 0) _originalTypeIndex = selectedType;
+            if (_toolClass.SelectedIndex >= 0) _originalClassIndex = _toolClass.SelectedIndex;
+        }
+        catch { }
+    }
+
     private void OnToolSelected(object? sender, EventArgs e)
     {
         RedrawHelper.Suspend(this);
         SuspendLayout();
         try
         {
+            // Commit pending edits to the previously loaded tool before switching away.
+            CommitCurrentTool();
+
             if (_toolSelector.SelectedIndex < 0) return;
 
             // New-format multitools
@@ -251,6 +286,8 @@ public partial class MultitoolPanel : UserControl
                 SetToolSizeFromIsLarge(data.IsLarge);
                 _toolClass.SelectedIndex = data.ClassIndex;
                 _originalClassIndex = data.ClassIndex;
+                _originalTypeIndex = data.TypeIndex;
+                _loadedToolIndex = idx;
                 _toolSeed.Text = data.Seed;
 
                 _storeGrid.LoadInventory(data.Store);
@@ -337,6 +374,9 @@ public partial class MultitoolPanel : UserControl
             }
             _primaryToolLabel.Text = UiStrings.Format("multitool.primary_label", MultitoolLogic.GetPrimaryToolName(_multitools, _activeToolIndex));
 
+            // The loaded tool was invalidated; forget it before the list is rebuilt.
+            _loadedToolIndex = -1;
+
             // Rebuild the tool list (BuildToolList skips invalidated slots)
             int selIdx = _toolSelector.SelectedIndex;
             _toolSelector.Items.Clear();
@@ -377,6 +417,8 @@ public partial class MultitoolPanel : UserControl
             var item = (MultitoolLogic.ToolListItem)_toolSelector.Items[_toolSelector.SelectedIndex]!;
             int idx = item.DataIndex;
             if (idx >= _multitools.Length) return;
+
+            CommitCurrentTool();
 
             var tool = _multitools.GetObject(idx);
             var config = ExportConfig.Instance;
@@ -435,12 +477,15 @@ public partial class MultitoolPanel : UserControl
                 return;
             }
 
+            CommitCurrentTool();
+
             var target = _multitools.GetObject(emptyIdx);
             foreach (var name in imported.Names())
                 target.Set(name, imported.Get(name));
 
             // Refresh the list by reloading
             int prevSel = _toolSelector.SelectedIndex;
+            _loadedToolIndex = -1;
             RefreshToolList();
 
             if (_toolSelector.Items.Count > 0)
@@ -522,11 +567,14 @@ public partial class MultitoolPanel : UserControl
                 MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
             if (result != DialogResult.Yes) return;
 
+            CommitCurrentTool();
+
             var tool = _multitools.GetObject(idx);
             var archivedSlot = archivedTools.GetObject(archIdx);
             MultitoolLogic.MoveToolToArchive(tool, archivedSlot);
 
             // Rebuild the tool list
+            _loadedToolIndex = -1;
             int selIdx = _toolSelector.SelectedIndex;
             _toolSelector.Items.Clear();
             var toolList = MultitoolLogic.BuildToolList(_multitools);
@@ -599,11 +647,14 @@ public partial class MultitoolPanel : UserControl
                 MessageBoxButtons.YesNo, MessageBoxIcon.Question);
             if (result != DialogResult.Yes) return;
 
+            CommitCurrentTool();
+
             var archivedSlot = archivedTools.GetObject(selectedItem.ArchiveIndex);
             var targetTool = _multitools.GetObject(emptyListIdx);
             MultitoolLogic.ImportToolFromArchive(archivedSlot, targetTool);
 
             // Refresh list and select the newly imported tool
+            _loadedToolIndex = -1;
             RefreshToolList();
             for (int i = 0; i < _toolSelector.Items.Count; i++)
             {
