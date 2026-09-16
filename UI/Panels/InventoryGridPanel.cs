@@ -793,8 +793,8 @@ public partial class InventoryGridPanel : UserControl
     ///     products and substances regardless of TechnologyCategory.</item>
     ///   <item>General inventories accept all item types (tech items must match OwnerEnums).</item>
     /// </list>
-    /// Also applies a filter to exclude maintenance-category technology items and
-    /// non-pickupable base building products that cannot be picked up in-game.
+    /// Also applies a filter to exclude maintenance-category technology items
+    /// and emotes.  Creature eggs are products and are not excluded.
     /// </summary>
     private bool CanAddItemToInventory(GameItem item)
     {
@@ -3027,7 +3027,7 @@ public partial class InventoryGridPanel : UserControl
 
     /// <summary>
     /// Removes a slot entry from the Slots JSON array and clears the cell.
-    /// Does not recompute adjacency — callers should do that once after all removals.
+    /// Does not recompute adjacency - callers should do that once after all removals.
     /// </summary>
     private void RemoveSlotEntry(SlotCell cell)
     {
@@ -4213,7 +4213,7 @@ public partial class InventoryGridPanel : UserControl
             if (e.Button == MouseButtons.Left && _pinVisible && GetPinRect().Contains(e.Location))
             {
                 PinToggleClicked?.Invoke(this, EventArgs.Empty);
-                return; // Consume the click — don't propagate as cell selection
+                return; // Consume the click - don't propagate as cell selection
             }
             base.OnMouseClick(e);
         }
@@ -4410,7 +4410,7 @@ public partial class InventoryGridPanel : UserControl
 
             // ---- Pin indicator (bottom-right, above amount bar) ----
             // Use TextRenderer (GDI) instead of Graphics.DrawString (GDI+)
-            // because GDI+ cannot render color emoji (🔒/🔓) — they show as
+            // because GDI+ cannot render color emoji (lock and unlock) - they show as
             // empty boxes.  TextRenderer correctly falls back to Segoe UI Emoji.
             // These should change to a bitmap / SVG later like a lot of the other glyphs.
             if (_pinVisible)
