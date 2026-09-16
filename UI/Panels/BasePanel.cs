@@ -27,6 +27,13 @@ public partial class BasePanel : UserControl
         _basesSubPanel.GoToJsonRequested += (s, e) => GoToJsonRequested?.Invoke(this, e);
         _storageSubPanel.GoToJsonRequested += (s, e) => GoToJsonRequested?.Invoke(this, e);
         _chestsSubPanel.GoToJsonRequested += (s, e) => GoToJsonRequested?.Invoke(this, e);
+        _spaceStationSubPanel.DataModified += (s, e) => DataModified?.Invoke(this, EventArgs.Empty);
+        _spaceStationSubPanel.GoToJsonRequested += (s, e) => GoToJsonRequested?.Invoke(this, e);
+        _spaceStationSubPanel.GoToBaseRequested += (s, dataIndex) =>
+        {
+            _innerTabs.SelectedTab = _basesPage;
+            _basesSubPanel.SelectBase(dataIndex);
+        };
     }
 
     public void SetDatabase(GameItemDatabase? database)
@@ -46,6 +53,7 @@ public partial class BasePanel : UserControl
         _basesSubPanel.LoadData(saveData);
         _storageSubPanel.LoadData(saveData);
         _chestsSubPanel.LoadData(saveData);
+        _spaceStationSubPanel.LoadData(saveData);
     }
 
     public void SaveData(JsonObject saveData)
@@ -53,6 +61,7 @@ public partial class BasePanel : UserControl
         _basesSubPanel.SaveData(saveData);
         _storageSubPanel.SaveData(saveData);
         _chestsSubPanel.SaveData(saveData);
+        _spaceStationSubPanel.SaveData(saveData);
     }
 
     public void ApplyUiLocalisation()
@@ -60,9 +69,11 @@ public partial class BasePanel : UserControl
         _basesPage.Text = UiStrings.Get("base.tab_bases");
         _chestsPage.Text = UiStrings.Get("base.tab_chests");
         _storagePage.Text = UiStrings.Get("base.tab_storage");
+        _spaceStationPage.Text = UiStrings.Get("base.tab_systems");
         _basesSubPanel.ApplyUiLocalisation();
         _chestsSubPanel.ApplyUiLocalisation();
         _storageSubPanel.ApplyUiLocalisation();
+        _spaceStationSubPanel.ApplyUiLocalisation();
     }
 }
 
@@ -710,7 +721,8 @@ internal class BasesSubPanel : UserControl
                 }
             }
 
-            // Load PersistentPlayerBases (HomePlanetBase and FreighterBase with BaseVersion >= 3)
+            // Load PersistentPlayerBases (HomePlanetBase, FreighterBase, PlayerSpaceStationBase,
+            // PlayerShipBase corvette bases and PlayerSpaceBase asteroid bases with BaseVersion >= 3)
             var bases = _playerState.GetArray("PersistentPlayerBases");
             if (bases != null)
             {
@@ -719,20 +731,25 @@ internal class BasesSubPanel : UserControl
                     try
                     {
                         var baseObj = bases.GetObject(i);
-                        string? baseType = null;
-                        try { baseType = baseObj.GetString("BaseType.PersistentBaseTypes") ?? baseObj.GetString("BaseType"); }
-                        catch { try { baseType = baseObj.GetString("BaseType"); } catch { } }
+                        var kind = SpaceStationLogic.GetBaseKind(baseObj);
+                        bool isHome = kind == SpaceStationLogic.BaseKind.Home;
+                        bool isFreighter = kind == SpaceStationLogic.BaseKind.Freighter;
+                        bool isStation = kind == SpaceStationLogic.BaseKind.SpaceStation;
+                        bool isCorvette = kind == SpaceStationLogic.BaseKind.Corvette;
+                        bool isSpace = kind == SpaceStationLogic.BaseKind.SpaceBase;
 
                         int baseVersion = 0;
                         try { baseVersion = baseObj.GetInt("BaseVersion"); } catch { }
 
-                        bool isHome = "HomePlanetBase".Equals(baseType, StringComparison.OrdinalIgnoreCase);
-                        bool isFreighter = "FreighterBase".Equals(baseType, StringComparison.OrdinalIgnoreCase);
-                        if ((isHome || isFreighter) && baseVersion >= 3)
+                        if ((isHome || isFreighter || isStation || isCorvette || isSpace) && baseVersion >= 3)
                         {
                             string name;
                             if (isFreighter)
                                 name = _playerState.GetString("PlayerFreighterName") ?? UiStrings.Format("base.fallback_base_name", i + 1);
+                            else if (isCorvette)
+                                name = SpaceStationLogic.ResolveCorvetteBaseName(_playerState, baseObj)
+                                       ?? baseObj.GetString("Name")
+                                       ?? UiStrings.Format("base.fallback_base_name", i + 1);
                             else
                                 name = baseObj.GetString("Name") ?? UiStrings.Format("base.fallback_base_name", i + 1);
                             int objectCount = 0;
@@ -743,7 +760,7 @@ internal class BasesSubPanel : UserControl
                             }
                             catch { }
 
-                            var item = new BaseInfoItem(name, baseObj, i, objectCount, isFreighter);
+                            var item = new BaseInfoItem(name, baseObj, i, objectCount, isFreighter, isStation, isCorvette, isSpace);
                             _baseInfoItems.Add(item);
                             _baseList.Items.Add(item);
                         }
@@ -991,14 +1008,17 @@ internal class BasesSubPanel : UserControl
         }
 
         bool isFreighter = item.IsFreighterBase;
+        bool isStation = item.IsStationBase;
+        bool isCorvette = item.IsCorvetteBase;
+        bool isSpace = item.IsSpaceBase;
 
         // For freighter bases, show the freighter name (read from PlayerFreighterName,
-        // not the base entry which is always empty). For planetary bases, show the
-        // base's own Name field.
-        if (isFreighter)
+        // not the base entry which is always empty). Corvette bases show the resolved
+        // ship name. For planetary, space station and space bases, show the base's own
+        // Name field.
+        if (isFreighter || isCorvette)
         {
-            string freighterName = _playerState?.GetString("PlayerFreighterName") ?? "";
-            _baseName.Text = freighterName;
+            _baseName.Text = item.DisplayName;
             _baseName.Enabled = false;
             _pendingBaseName = null;
         }
@@ -1019,11 +1039,12 @@ internal class BasesSubPanel : UserControl
         _baseItems.Text = objectCount.ToString(CultureInfo.CurrentCulture);
         _exportBtn.Enabled = true;
         _importBtn.Enabled = true;
-        _moveBaseComputerBtn.Enabled = !isFreighter;
+        bool isShipBase = isFreighter || isStation || isCorvette || isSpace;
+        _moveBaseComputerBtn.Enabled = !isShipBase;
         _deleteBaseBtn.Enabled = true;
-        _clearTerrainEditsBtn.Enabled = !isFreighter;
-        _clearAllTerrainEditsBtn.Enabled = !isFreighter;
-        _clearAllTerrainExceptBasesBtn.Enabled = !isFreighter;
+        _clearTerrainEditsBtn.Enabled = !isShipBase;
+        _clearAllTerrainEditsBtn.Enabled = !isShipBase;
+        _clearAllTerrainExceptBasesBtn.Enabled = !isShipBase;
         UpdateFreighterBaseControls(isFreighter);
 
         if (isFreighter)
@@ -2567,6 +2588,20 @@ internal class BasesSubPanel : UserControl
         }
     }
 
+    /// <summary>
+    /// Selects the base with the given PersistentPlayerBases array index in the list.
+    /// Used by the Space Station tab's "Go to Base" button.
+    /// </summary>
+    internal void SelectBase(int dataIndex)
+    {
+        var item = _baseInfoItems.FirstOrDefault(x => x.DataIndex == dataIndex);
+        if (item == null) return;
+
+        int idx = _baseList.Items.IndexOf(item);
+        if (idx >= 0)
+            _baseList.SelectedIndex = idx;
+    }
+
     private void UpdateMoveButtonStates()
     {
         if (_baseList.SelectedItem is not BaseInfoItem selected)
@@ -2608,6 +2643,9 @@ internal class BasesSubPanel : UserControl
         public JsonObject Data { get; }
         public int ObjectCount { get; }
         public bool IsFreighterBase { get; }
+        public bool IsStationBase { get; }
+        public bool IsCorvetteBase { get; }
+        public bool IsSpaceBase { get; }
 
         // Tracks the entry's position in the PersistentPlayerBases array.
         // Updated in tandem with SwapPlayerBases calls so the list always reflects
@@ -2623,21 +2661,33 @@ internal class BasesSubPanel : UserControl
             }
         }
 
-        public BaseInfoItem(string displayName, JsonObject data, int dataIndex, int objectCount, bool isFreighterBase = false)
+        public BaseInfoItem(string displayName, JsonObject data, int dataIndex, int objectCount,
+            bool isFreighterBase = false, bool isStationBase = false, bool isCorvetteBase = false,
+            bool isSpaceBase = false)
         {
             DisplayName = displayName;
             Data = data;
             DataIndex = dataIndex;
             ObjectCount = objectCount;
             IsFreighterBase = isFreighterBase;
+            IsStationBase = isStationBase;
+            IsCorvetteBase = isCorvetteBase;
+            IsSpaceBase = isSpaceBase;
         }
 
         // The display includes the raw array index (e.g. "[7] My Cool Base Name") so
         // players can identify a base's position in PersistentPlayerBases while reordering.
-        // Freighter bases are suffixed with [F] to distinguish them.
-        public override string ToString() => IsFreighterBase
-            ? $"[{DataIndex}] [F] {DisplayName}"
-            : $"[{DataIndex}] {DisplayName}";
+        // Freighter, space station, corvette and space bases are suffixed with [F], [S],
+        // [C] and [A] respectively to distinguish them.
+        public override string ToString()
+        {
+            string marker = IsFreighterBase ? "[F] "
+                : IsStationBase ? "[S] "
+                : IsCorvetteBase ? "[C] "
+                : IsSpaceBase ? "[A] "
+                : "";
+            return $"[{DataIndex}] {marker}{DisplayName}";
+        }
     }
 
     private sealed class BaseObjectItem

@@ -21,10 +21,12 @@ partial class BasePanel
         this._basesSubPanel = new NMSE.UI.Panels.BasesSubPanel();
         this._chestsSubPanel = new NMSE.UI.Panels.ChestsSubPanel();
         this._storageSubPanel = new NMSE.UI.Panels.StorageSubPanel();
+        this._spaceStationSubPanel = new NMSE.UI.Panels.SpaceStationSubPanel();
         this._innerTabs = new NMSE.UI.Panels.DoubleBufferedTabControl();
         this._basesPage = new System.Windows.Forms.TabPage();
         this._chestsPage = new System.Windows.Forms.TabPage();
         this._storagePage = new System.Windows.Forms.TabPage();
+        this._spaceStationPage = new System.Windows.Forms.TabPage();
         this.SuspendLayout();
         //
         // _basesSubPanel
@@ -38,6 +40,10 @@ partial class BasePanel
         // _storageSubPanel
         //
         this._storageSubPanel.Dock = System.Windows.Forms.DockStyle.Fill;
+        //
+        // _spaceStationSubPanel
+        //
+        this._spaceStationSubPanel.Dock = System.Windows.Forms.DockStyle.Fill;
         //
         // basesPage
         //
@@ -54,12 +60,18 @@ partial class BasePanel
         this._storagePage.Text = "Storage";
         this._storagePage.Controls.Add(this._storageSubPanel);
         //
+        // spaceStationPage
+        //
+        this._spaceStationPage.Text = "Space Station";
+        this._spaceStationPage.Controls.Add(this._spaceStationSubPanel);
+        //
         // _innerTabs
         //
         this._innerTabs.Dock = System.Windows.Forms.DockStyle.Fill;
         this._innerTabs.TabPages.Add(this._basesPage);
         this._innerTabs.TabPages.Add(this._chestsPage);
         this._innerTabs.TabPages.Add(this._storagePage);
+        this._innerTabs.TabPages.Add(this._spaceStationPage);
         //
         // BasePanel
         //
@@ -75,7 +87,9 @@ partial class BasePanel
     private NMSE.UI.Panels.BasesSubPanel _basesSubPanel = null!;
     private NMSE.UI.Panels.ChestsSubPanel _chestsSubPanel = null!;
     private NMSE.UI.Panels.StorageSubPanel _storageSubPanel = null!;
+    private NMSE.UI.Panels.SpaceStationSubPanel _spaceStationSubPanel = null!;
     private System.Windows.Forms.TabPage _basesPage = null!;
     private System.Windows.Forms.TabPage _chestsPage = null!;
     private System.Windows.Forms.TabPage _storagePage = null!;
+    private System.Windows.Forms.TabPage _spaceStationPage = null!;
 }
