@@ -835,17 +835,7 @@ public partial class StarshipPanel : UserControl
             if (result != DialogResult.Yes) return;
 
             // Get legacy colours flag for this ship
-            bool usesLegacyColours = false;
-            try
-            {
-                var legacyArr = _playerState.GetArray("ShipUsesLegacyColours");
-                if (legacyArr != null && idx < legacyArr.Length)
-                {
-                    var val = legacyArr.Get(idx);
-                    if (val is bool b) usesLegacyColours = b;
-                }
-            }
-            catch { }
+            bool usesLegacyColours = StarshipLogic.GetShipUsesLegacyColours(_playerState, idx);
 
             var archivedSlot = archivedShips.GetObject(archIdx);
             var ccdArray = _playerState.GetArray("CharacterCustomisationData");
@@ -927,7 +917,7 @@ public partial class StarshipPanel : UserControl
             var archivedSlot = archivedShips.GetObject(selectedItem.ArchiveIndex);
             var targetShip = _shipOwnership.GetObject(emptyListIdx);
             var ccdArray = _playerState.GetArray("CharacterCustomisationData");
-            StarshipLogic.ImportShipFromArchive(archivedSlot, targetShip, emptyListIdx, ccdArray);
+            StarshipLogic.ImportShipFromArchive(archivedSlot, targetShip, emptyListIdx, ccdArray, _playerState);
 
             // Rebuild ship list and select the newly imported ship
             _shipSelector.Items.Clear();
@@ -1095,6 +1085,11 @@ public partial class StarshipPanel : UserControl
                 if (ccdEntry != null)
                     export.Set("CharacterCustomisationData", ccdEntry);
 
+                // ShipUsesLegacyColours lives in PlayerStateData as an array parallel
+                // to ShipOwnership, so it has to be carried alongside the ship block.
+                // Always written, so the file is unambiguous about which mode it wants.
+                export.Set("UsesLegacyColours", StarshipLogic.GetShipUsesLegacyColours(_playerState, idx));
+
                 export.ExportToFile(dialog.FileName);
             }
         }
@@ -1128,6 +1123,10 @@ public partial class StarshipPanel : UserControl
             JsonObject? zipCcd = null;
             // CCD from the wrapper-level "CharacterCustomisationData" key (new format)
             JsonObject? wrapperCcd = null;
+            // Legacy-colour flag from the wrapper-level "UsesLegacyColours" key.
+            // Stays null for formats that cannot carry it (IO Tool ZIPs, plain ship
+            // JSON, NomNom envelopes) and for files exported before it was added.
+            bool? importedLegacyColours = null;
 
             if (zipResult != null)
             {
@@ -1143,12 +1142,13 @@ public partial class StarshipPanel : UserControl
             {
                 var imported = JsonObject.ImportFromFile(dialog.FileName);
 
-                // Check for wrapper format: { Ship, [Base], [CharacterCustomisationData] }
+                // Check for wrapper format: { Ship, [Base], [CharacterCustomisationData], [UsesLegacyColours] }
                 importedShip = imported.GetObject("Ship");
                 if (importedShip != null)
                 {
                     importedBase = imported.GetObject("Base");
                     wrapperCcd = imported.GetObject("CharacterCustomisationData");
+                    importedLegacyColours = StarshipLogic.TryGetExportedLegacyColours(imported);
                 }
                 else
                 {
@@ -1225,15 +1225,19 @@ public partial class StarshipPanel : UserControl
             // Extract CCD from the legacy __ShipCustomisation key (backwards compat)
             var legacyCcd = ExtractLegacyShipCustomisation(importedShip);
 
-            // Copy all properties from imported ship to target slot
+            // Copy all properties from imported ship to target slot.
+            // UsesLegacyColours is skipped: it belongs in the PlayerStateData array,
+            // not on the ship, and copying it would write a stray key into the save.
             foreach (var name in importedShip.Names())
             {
                 if (name == "__ShipCustomisation") continue;
+                if (name == "UsesLegacyColours") continue;
                 targetShip.Set(name, importedShip.Get(name));
             }
 
-            // Remove the legacy key from the live ship object if it leaked
+            // Remove the keys that don't belong on a live ship object if they leaked
             targetShip.Remove("__ShipCustomisation");
+            targetShip.Remove("UsesLegacyColours");
 
             // Determine CCD source (priority order):
             //   1. ZIP ccd.json (if present and non-default)
@@ -1247,6 +1251,12 @@ public partial class StarshipPanel : UserControl
 
             var ccdArray = _playerState.GetArray("CharacterCustomisationData");
             StarshipLogic.SetShipCustomisation(ccdArray, targetIdx, ccdToApply);
+
+            // Apply the legacy-colour flag only when the file actually carried one.
+            // Files that cannot express it (older NMSE exports, IO Tool ZIPs, plain
+            // ship JSON) leave the destination slot's existing flag untouched.
+            if (importedLegacyColours.HasValue)
+                StarshipLogic.SetShipUsesLegacyColours(_playerState, targetIdx, importedLegacyColours.Value);
 
             // Import base building objects for corvette ships
             if (importedBase != null && importedIsCorvette)
@@ -1413,6 +1423,7 @@ public partial class StarshipPanel : UserControl
                 export.Set("Ship", shipSnapshot);
                 if (baseObj != null)
                     export.Set("Base", baseObj);
+                export.Set("UsesLegacyColours", StarshipLogic.GetShipUsesLegacyColours(_playerState, idx));
                 export.ExportToFile(dialog.FileName);
             }
         }
@@ -1457,8 +1468,15 @@ public partial class StarshipPanel : UserControl
             foreach (var name in importedShip.Names())
             {
                 if (name == "Inventory") continue;
+                if (name == "UsesLegacyColours") continue;
                 ship.Set(name, importedShip.Get(name));
             }
+            ship.Remove("UsesLegacyColours");
+
+            // Apply the legacy-colour flag only when the snapshot carried one
+            var snapshotLegacyColours = StarshipLogic.TryGetExportedLegacyColours(imported);
+            if (snapshotLegacyColours.HasValue)
+                StarshipLogic.SetShipUsesLegacyColours(_playerState, idx, snapshotLegacyColours.Value);
 
             // Import base data if present
             var importedBase = imported.GetObject("Base");

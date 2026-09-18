@@ -5613,6 +5613,93 @@ public class LogicTests
     }
 
     [Fact]
+    public void SaveShipData_ShortLegacyColoursArray_GrowsAndPersists()
+    {
+        // A truncated parallel array used to make the write silently vanish,
+        // so the checkbox appeared to save but the value never persisted.
+        var ship = MakeMinimalShipForSave();
+
+        var playerState = new JsonObject();
+        var legacyArr = new JsonArray();
+        legacyArr.Add(true);
+        playerState.Add("ShipUsesLegacyColours", legacyArr);
+        playerState.Add("PrimaryShip", 0);
+
+        var values = new StarshipLogic.ShipSaveValues
+        {
+            Name = "TestShip",
+            UseOldColours = true,
+            ShipIndex = 3,
+            PrimaryShipIndex = 0,
+        };
+        StarshipLogic.SaveShipData(ship, playerState, values);
+
+        var arr = playerState.GetArray("ShipUsesLegacyColours");
+        Assert.NotNull(arr);
+        Assert.Equal(4, arr.Length);
+        Assert.Equal(true, arr.Get(0));
+        Assert.Equal(false, arr.Get(1));
+        Assert.Equal(false, arr.Get(2));
+        Assert.Equal(true, arr.Get(3));
+    }
+
+    [Fact]
+    public void SaveShipData_MissingLegacyColoursArray_StillSavesTheRest()
+    {
+        // A save without the key predates the flag - don't invent it, but
+        // everything else in the save must still be applied.
+        var ship = MakeMinimalShipForSave();
+
+        var playerState = new JsonObject();
+        playerState.Add("PrimaryShip", 0);
+
+        var values = new StarshipLogic.ShipSaveValues
+        {
+            Name = "RenamedShip",
+            UseOldColours = true,
+            ShipIndex = 0,
+            PrimaryShipIndex = 0,
+        };
+        StarshipLogic.SaveShipData(ship, playerState, values);
+
+        Assert.Null(playerState.GetArray("ShipUsesLegacyColours"));
+        Assert.Equal("RenamedShip", ship.GetString("Name"));
+    }
+
+    /// <summary>
+    /// Builds the smallest ship object SaveShipData will accept: name, resource
+    /// with seed, and an Inventory carrying the four ship base stats.
+    /// </summary>
+    private static JsonObject MakeMinimalShipForSave()
+    {
+        var ship = new JsonObject();
+        ship.Add("Name", "TestShip");
+        var resource = new JsonObject();
+        resource.Add("Filename", "MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC.SCENE.MBIN");
+        var seedArr = new JsonArray();
+        seedArr.Add(true);
+        seedArr.Add("0x1234");
+        resource.Add("Seed", seedArr);
+        ship.Add("Resource", resource);
+        var inv = new JsonObject();
+        var cls = new JsonObject();
+        cls.Add("InventoryClass", "C");
+        inv.Add("Class", cls);
+        var baseStats = new JsonArray();
+        foreach (var statId in new[] { "^SHIP_DAMAGE", "^SHIP_SHIELD", "^SHIP_HYPERDRIVE", "^SHIP_AGILE" })
+        {
+            var stat = new JsonObject();
+            stat.Add("BaseStatID", statId);
+            stat.Add("Value", 0.0);
+            baseStats.Add(stat);
+        }
+        inv.Add("BaseStatValues", baseStats);
+        inv.Add("Slots", new JsonArray());
+        ship.Add("Inventory", inv);
+        return ship;
+    }
+
+    [Fact]
     public void SaveShipData_SetsClassOnAllInventories()
     {
         // Class should be set on Inventory, Inventory_TechOnly, and Inventory_Cargo
